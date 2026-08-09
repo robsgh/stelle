@@ -236,6 +236,37 @@ a.widget-title:hover { color: var(--accent); }
   place-items: center;
 }
 
+.refresh-control {
+  position: relative;
+  flex: none;
+}
+
+.refresh-tooltip {
+  position: absolute;
+  z-index: 1;
+  top: calc(100% + 8px);
+  right: 0;
+  width: max-content;
+  max-width: 200px;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  opacity: 0;
+  color: var(--text);
+  background: var(--surface-soft);
+  box-shadow: var(--shadow);
+  font-size: 11px;
+  pointer-events: none;
+  transform: translateY(-3px);
+  transition: opacity .16s ease, transform .16s ease;
+}
+
+.refresh-control:hover .refresh-tooltip,
+.refresh-control:focus-within .refresh-tooltip {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .icon-button:hover,
 .refresh-button:hover { color: var(--text); }
 
@@ -267,13 +298,6 @@ a.widget-title:hover { color: var(--accent); }
   font-size: 10px;
 }
 
-.updated {
-  margin: 10px 2px 0;
-  color: var(--soft);
-  font-size: 10px;
-  text-align: right;
-}
-
 .error-state {
   display: flex;
   align-items: flex-start;
@@ -298,8 +322,6 @@ a.widget-title:hover { color: var(--accent); }
   border-radius: 9px;
   color: #e15f68;
   background: color-mix(in srgb, #e15f68 10%, var(--surface-soft));
-  font-size: 13px;
-  font-weight: 650;
 }
 
 .refresh-button {
@@ -312,11 +334,8 @@ a.widget-title:hover { color: var(--accent); }
 }
 
 .spinner {
-  width: 21px;
-  height: 21px;
-  border: 2px solid var(--line);
-  border-top-color: var(--accent);
-  border-radius: 50%;
+  flex: none;
+  color: var(--accent);
   animation: spin .8s linear infinite;
 }
 

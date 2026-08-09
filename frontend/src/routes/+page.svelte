@@ -1,7 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import CircleAlert from '@lucide/svelte/icons/circle-alert';
+  import ExternalLink from '@lucide/svelte/icons/external-link';
+  import LoaderCircle from '@lucide/svelte/icons/loader-circle';
+  import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import Favicon from '$lib/Favicon.svelte';
-  import Icon from '$lib/Icon.svelte';
   import type { Dashboard, LuaWidget, WidgetState } from '$lib/types';
   import '../app.css';
 
@@ -84,7 +87,7 @@
               <small>{widget.description}</small>
               <span class="hostname">{new URL(widget.url).host}</span>
             </span>
-            <span class="open-icon"><Icon name="arrow" size={20} /></span>
+            <span class="open-icon"><ExternalLink size={20} /></span>
           </a>
         {:else}
           {@const state = widgetStates[widget.id] ?? { status: 'loading' }}
@@ -92,15 +95,15 @@
             {#if state.status === 'loading'}
               <div class="card-top">
                 <div><span class="skeleton title-skeleton"></span><span class="skeleton text-skeleton"></span></div>
-                <span class="spinner" aria-label="Refreshing"></span>
+                <LoaderCircle class="spinner" size={21} aria-label="Refreshing" />
               </div>
               <div class="metrics loading-metrics"><span></span><span></span><span></span></div>
             {:else if state.status === 'error'}
               <div class="error-state" role="alert">
-                <span class="error-badge">!</span>
+                <span class="error-badge"><CircleAlert size={18} /></span>
                 <div><strong>Widget unavailable</strong><p>{state.message}</p></div>
               </div>
-              <button class="refresh-button" onclick={() => refresh(widget)}><Icon name="refresh" size={17} /> Retry</button>
+              <button class="refresh-button" onclick={() => refresh(widget)}><RefreshCw size={17} /> Retry</button>
             {:else}
               <div class="card-top">
                 <div>
@@ -109,16 +112,22 @@
                   {:else}<h2 class="widget-title">{state.content.title}</h2>{/if}
                   <p class="widget-subtitle">{state.content.subtitle}</p>
                 </div>
-                <button class="icon-button" onclick={() => refresh(widget)} aria-label={`Refresh ${state.content.title}`} title="Refresh">
-                  <Icon name="refresh" size={18} />
-                </button>
+                <div class="refresh-control">
+                  <button
+                    class="icon-button"
+                    onclick={() => refresh(widget)}
+                    aria-label={`Refresh ${state.content.title}. Updated at ${displayTime(state.content.fetched_at)}`}
+                  >
+                    <RefreshCw size={18} />
+                  </button>
+                  <span class="refresh-tooltip" role="tooltip">Updated at {displayTime(state.content.fetched_at)}</span>
+                </div>
               </div>
               <div class="metrics">
                 {#each state.content.metrics as metric}
                   <div><strong>{metric.value ?? '—'}</strong><span>{metric.label}</span></div>
                 {/each}
               </div>
-              <p class="updated">Updated {displayTime(state.content.fetched_at)}</p>
             {/if}
           </article>
         {/if}
