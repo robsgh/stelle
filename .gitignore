@@ -7,3 +7,4 @@ frontend/build/
 .DS_Store
 *.log
 .env
+deploy.sh

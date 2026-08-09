@@ -77,8 +77,6 @@
           <a
             class="card link-card"
             href={widget.url}
-            target="_blank"
-            rel="noopener noreferrer"
             style={`--widget-accent:${widget.accent ?? dashboard.accent}`}
           >
             <Favicon url={widget.url} />
@@ -108,7 +106,7 @@
               <div class="card-top">
                 <div>
                   {#if state.content.href}
-                    <a class="widget-title" href={state.content.href} target="_blank" rel="noopener noreferrer">{state.content.title}</a>
+                    <a class="widget-title" href={state.content.href}>{state.content.title}</a>
                   {:else}<h2 class="widget-title">{state.content.title}</h2>{/if}
                   <p class="widget-subtitle">{state.content.subtitle}</p>
                 </div>
