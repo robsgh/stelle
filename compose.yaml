@@ -5,6 +5,9 @@ services:
     restart: unless-stopped
     ports:
       - "8080:8080"
-    # Replace the bundled configuration by uncommenting this read-only mount.
-    # volumes:
-    #   - ./config:/config:ro
+    environment:
+      STELLE_CONFIG: "/config/dashboard.yaml"
+      STELLE_STATIC_DIR: "/app/public"
+      STELLE_LISTEN: "0.0.0.0:8080"
+    volumes:
+      - ./config:/config:ro
