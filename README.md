@@ -1,47 +1,42 @@
 # Stelle
 
-Stelle is a self-hostable and customizable dashboard/start screen for homelabbers. It combines responsive link cards with sandboxed, server-side Luau widgets in a single, minimal container.
+Stelle is a self-hosted dashboard for a home lab. It combines link cards with sandboxed, server-side Luau widgets.
 
 ![MVP](https://img.shields.io/badge/status-MVP-8b5cf6)
 
 ## Quick start
-
-Build and run the image:
 
 ```sh
 docker build -t stelle .
 docker run --rm --name stelle -p 8080:8080 stelle
 ```
 
-Open <http://localhost:8080>. The bundled dashboard contains a Luau-powered GitHub statistics card plus links to YouTube and the configured Proxmox host.
+Open <http://localhost:8080>.
 
-You can also run it behind Traefik. The Compose deployment reads its private routing values from an untracked `.env` file and expects the configured external Docker network to already exist:
+The image includes the example configuration from `config-example/`. Stelle does not provide authentication. Keep it on a trusted network or put it behind an authenticated reverse proxy.
 
-```sh
-cp -R config-example config
-docker compose up --build
-```
+## Configuration
 
-Stelle has no built-in authentication in this MVP. Keep it on a trusted network or place it behind an authenticated reverse proxy.
-
-## Configure the dashboard
-
-Configuration is loaded once from `/config/dashboard.yaml`. Copy the committed examples into the ignored runtime configuration directory, customize them, and mount that directory read-only:
+Stelle reads `/config/dashboard.yaml` when it starts. To use your own configuration, copy the example and mount it into the container:
 
 ```sh
-cp -R config-example config
+cp -r config-example/. config/
 docker run --rm --name stelle -p 8080:8080 \
   -v "$PWD/config:/config:ro" stelle
 ```
 
-Restart the container after changing configuration or scripts. `STELLE_CONFIG` can point to a different YAML file inside the container.
-Stelle listens on port `8080` by default; set `STELLE_PORT` to override it.
+Git ignores `config/`, so it can contain private host names and settings. Restart Stelle after a configuration change.
 
-A configuration only needs a `widgets` list. By default, the heading greets the visitor based on their local time and displays the current time. Optional top-level settings are `title`, `subtitle`, `theme` (`system`, `light`, or `dark`), and `accent` (`#8b5cf6`). A configured title or subtitle replaces its corresponding dynamic default.
+A configuration requires a `widgets` list. It can also contain these settings:
+
+- `title`: Replaces the time-based greeting.
+- `subtitle`: Replaces the local time.
+- `theme`: One of `system`, `light`, or `dark`. The default is `system`.
+- `accent`: The main color. The default is `#8b5cf6`.
+
+Without a title or subtitle, Stelle shows a local-time greeting and the current time.
 
 ### Link widgets
-
-Link cards support internet services, internal DNS names, IP addresses, and non-standard ports. The browser loads each site's conventional `/favicon.ico` directly.
 
 ```yaml
 widgets:
@@ -52,9 +47,11 @@ widgets:
     accent: "#38bdf8"
 ```
 
+Link URLs must use HTTP or HTTPS. The browser requests `/favicon.ico` from each link host.
+
 ### Luau widgets
 
-Luau widgets return a constrained statistics model. Each widget must explicitly allow every network origin it contacts:
+A Luau widget gets data on the server and returns a statistics card. Each network origin must be present in `network_allow`.
 
 ```yaml
 widgets:
@@ -67,14 +64,14 @@ widgets:
       repository: robsgh/stelle
 ```
 
-The script receives these globals:
+The script can use:
 
-- `settings`: read-only values from the widget configuration
-- `http.get(url, headers?)`: an allowlisted HTTP GET returning `{ status, body }`
-- `json.decode(value)` and `json.encode(value)`
-- `log(message)`: server-side informational logging
+- `settings`: Read-only widget settings.
+- `http.get(url, headers?)`: Sends an HTTP GET request to an allowed origin and returns `{ status, body }`.
+- `json.decode(value)` and `json.encode(value)`: JSON conversion.
+- `log(message)`: Server logging.
 
-It must return:
+The script must return this structure:
 
 ```lua
 return {
@@ -89,11 +86,28 @@ return {
 }
 ```
 
-Every refresh uses a new sandbox with memory, execution-time, response-size, and outbound-origin limits. Widgets have no persistence, filesystem, process, environment, secret, or raw-socket API.
+Each refresh uses a new sandbox with memory, execution-time, response-size, and network limits. Widgets cannot access the file system, processes, environment variables, persistent storage, or raw sockets.
+
+## Compose deployment
+
+`compose.yaml` deploys a prebuilt image behind Traefik. It expects an external Docker network and the required `STELLE_*` values in an untracked `.env` file.
+
+```sh
+docker compose up --detach
+```
 
 ## Local development
 
-Start the backend, pointing it at the repository assets:
+Build the frontend:
+
+```sh
+cd frontend
+npm ci
+npm run build
+cd ..
+```
+
+Start the backend:
 
 ```sh
 STELLE_CONFIG="$PWD/config/dashboard.yaml" \
@@ -101,19 +115,23 @@ STELLE_STATIC_DIR="$PWD/frontend/build" \
 cargo run
 ```
 
-For frontend hot reload, run `npm install && npm run dev` inside `frontend/`; Vite proxies API requests to port 8080.
+For frontend hot reload, run `npm run dev` in `frontend/`. Vite sends API requests to port `8080`.
 
-Useful checks:
+Run the checks with `cargo test`, `npm run check`, and `npm run build`.
 
-```sh
-cargo test
-cd frontend && npm run check && npm run build
-```
+## Environment variables
+
+- `STELLE_CONFIG`: Configuration file path. The default is `/config/dashboard.yaml`.
+- `STELLE_STATIC_DIR`: Frontend file directory. The default is `/app/public`.
+- `STELLE_PORT`: HTTP port. The default is `8080`.
+- `RUST_LOG`: Rust log filter.
 
 ## HTTP API
 
-- `GET /api/dashboard` returns theme and public widget metadata.
-- `POST /api/widgets/{id}/refresh` executes a Luau widget.
-- `GET /healthz` is the container health endpoint.
+- `GET /api/dashboard`: Public dashboard configuration.
+- `POST /api/widgets/{id}/refresh`: Refreshes one Luau widget.
+- `GET /healthz`: Health status.
 
-Stelle is licensed under the [MIT License](LICENSE).
+## License
+
+[MIT](LICENSE)
