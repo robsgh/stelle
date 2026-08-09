@@ -11,7 +11,14 @@ use serde_json::json;
 use crate::{AppState, config::LoadedWidget, lua::TIME_LIMIT};
 
 pub async fn dashboard(State(state): State<Arc<AppState>>) -> Response {
-    Json(&state.config).into_response()
+    Json(
+        state
+            .config
+            .read()
+            .expect("configuration lock poisoned")
+            .clone(),
+    )
+    .into_response()
 }
 
 pub async fn refresh_widget(
@@ -20,10 +27,12 @@ pub async fn refresh_widget(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let widget = state
         .config
+        .read()
+        .expect("configuration lock poisoned")
         .widgets
         .iter()
         .find_map(|widget| match widget {
-            LoadedWidget::Lua(widget) if widget.id == id => Some(widget),
+            LoadedWidget::Lua(widget) if widget.id == id => Some(widget.clone()),
             _ => None,
         })
         .ok_or(ApiError(
@@ -31,7 +40,7 @@ pub async fn refresh_widget(
             "widget_not_found",
             "Widget was not found",
         ))?;
-    let content = tokio::time::timeout(TIME_LIMIT, state.lua.execute(widget))
+    let content = tokio::time::timeout(TIME_LIMIT, state.lua.execute(&widget))
         .await
         .map_err(|_| {
             ApiError(

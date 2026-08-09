@@ -5,14 +5,19 @@ mod lua;
 use std::{
     env,
     net::{Ipv4Addr, SocketAddr},
-    path::PathBuf,
-    sync::Arc,
+    path::{Path, PathBuf},
+    sync::{Arc, RwLock},
+    time::Duration,
 };
 
 use anyhow::{Context, Result};
 use axum::{
     Router,
     routing::{get, post},
+};
+use notify_debouncer_mini::{
+    DebounceEventResult, Debouncer, new_debouncer,
+    notify::{RecommendedWatcher, RecursiveMode},
 };
 use tower_http::{
     services::{ServeDir, ServeFile},
@@ -24,7 +29,7 @@ use config::LoadedConfig;
 use lua::LuaRuntime;
 
 pub struct AppState {
-    config: LoadedConfig,
+    config: Arc<RwLock<LoadedConfig>>,
     lua: LuaRuntime,
 }
 
@@ -48,8 +53,10 @@ async fn main() -> Result<()> {
         .context("invalid STELLE_PORT")?;
     let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
 
+    let config = Arc::new(RwLock::new(config::load(&config_path)?));
+    let _config_watcher = watch_config(&config_path, Arc::clone(&config))?;
     let state = Arc::new(AppState {
-        config: config::load(&config_path)?,
+        config,
         lua: LuaRuntime::new(),
     });
     let index = static_dir.join("index.html");
@@ -68,6 +75,33 @@ async fn main() -> Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
+}
+
+fn watch_config(
+    path: &Path,
+    config: Arc<RwLock<LoadedConfig>>,
+) -> Result<Debouncer<RecommendedWatcher>> {
+    let config_path = path.to_owned();
+    let mut watcher = new_debouncer(
+        Duration::from_millis(500),
+        move |event: DebounceEventResult| match event {
+            Ok(_) => match config::load(&config_path) {
+                Ok(updated) => {
+                    *config.write().expect("configuration lock poisoned") = updated;
+                    tracing::info!(config = %config_path.display(), "configuration reloaded");
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "configuration reload failed; keeping previous configuration");
+                }
+            },
+            Err(error) => tracing::warn!(%error, "configuration watch failed"),
+        },
+    )?;
+    watcher.watcher().watch(
+        path.parent().unwrap_or_else(|| Path::new(".")),
+        RecursiveMode::Recursive,
+    )?;
+    Ok(watcher)
 }
 
 async fn shutdown_signal() {

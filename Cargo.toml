@@ -9,6 +9,7 @@ description = "A self-hostable, scriptable homelab dashboard"
 anyhow = "1.0"
 axum = "0.8"
 mlua = { version = "0.12", features = ["luau", "vendored", "send", "serialize"] }
+notify-debouncer-mini = "0.7"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls-webpki-roots"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
