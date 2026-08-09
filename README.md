@@ -25,7 +25,7 @@ docker run --rm --name stelle -p 8080:8080 \
   -v "$PWD/config:/config:ro" stelle
 ```
 
-Git ignores `config/`, so it can contain private host names and settings. Restart Stelle after a configuration change.
+Git ignores `config/`, so it can contain private host names and settings. Stelle detects changes to the dashboard file and Luau scripts. A valid change applies to the next page load or widget request. If a change is invalid, Stelle keeps the previous configuration and writes the error to the log.
 
 A configuration requires a `widgets` list. It can also contain these settings:
 

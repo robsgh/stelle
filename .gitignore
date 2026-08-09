@@ -8,4 +8,5 @@ frontend/build/
 *.log
 .env
 deploy.sh
+sync-config.sh
 config/
