@@ -9,3 +9,4 @@ frontend/build
 Dockerfile*
 compose*.yaml
 README.md
+.env

@@ -1,13 +1,27 @@
 services:
   stelle:
-    build: .
+    image: "${STELLE_IMAGE:?}"
+    pull_policy: always
     container_name: stelle
     restart: unless-stopped
-    ports:
-      - "8080:8080"
     environment:
       STELLE_CONFIG: "/config/dashboard.yaml"
       STELLE_STATIC_DIR: "/app/public"
-      STELLE_LISTEN: "0.0.0.0:8080"
+      STELLE_PORT: "${STELLE_PORT:-8080}"
     volumes:
       - ./config:/config:ro
+    labels:
+      traefik.enable: "${STELLE_TRAEFIK_ENABLE:?}"
+      traefik.docker.network: "${STELLE_TRAEFIK_NETWORK:?}"
+      traefik.http.routers.stelle.rule: "${STELLE_TRAEFIK_RULE:?}"
+      traefik.http.routers.stelle.entrypoints: "${STELLE_TRAEFIK_ENTRYPOINTS:?}"
+      traefik.http.routers.stelle.tls: "${STELLE_TRAEFIK_TLS:?}"
+      traefik.http.routers.stelle.service: "${STELLE_TRAEFIK_SERVICE:?}"
+      traefik.http.services.stelle.loadbalancer.server.port: "${STELLE_PORT:-8080}"
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    name: "${STELLE_TRAEFIK_NETWORK:?}"
+    external: true

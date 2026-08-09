@@ -2,7 +2,12 @@ mod api;
 mod config;
 mod lua;
 
-use std::{env, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{
+    env,
+    net::{Ipv4Addr, SocketAddr},
+    path::PathBuf,
+    sync::Arc,
+};
 
 use anyhow::{Context, Result};
 use axum::{
@@ -37,8 +42,11 @@ async fn main() -> Result<()> {
     );
     let static_dir =
         PathBuf::from(env::var("STELLE_STATIC_DIR").unwrap_or_else(|_| "/app/public".into()));
-    let listen = env::var("STELLE_LISTEN").unwrap_or_else(|_| "0.0.0.0:8080".into());
-    let address: SocketAddr = listen.parse().context("invalid STELLE_LISTEN address")?;
+    let port: u16 = env::var("STELLE_PORT")
+        .unwrap_or_else(|_| "8080".into())
+        .parse()
+        .context("invalid STELLE_PORT")?;
+    let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
 
     let state = Arc::new(AppState {
         config: config::load(&config_path)?,

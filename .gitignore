@@ -6,3 +6,4 @@ frontend/build/
 **/mutants.out*/
 .DS_Store
 *.log
+.env

@@ -23,7 +23,8 @@ COPY config /config
 RUN chown -R stelle:stelle /app /config
 
 USER stelle
+ENV STELLE_PORT=8080
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1
+  CMD wget -q -O /dev/null "http://127.0.0.1:${STELLE_PORT}/healthz" || exit 1
 ENTRYPOINT ["/usr/local/bin/stelle"]

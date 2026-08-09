@@ -15,7 +15,7 @@ docker run --rm --name stelle -p 8080:8080 stelle
 
 Open <http://localhost:8080>. The bundled dashboard contains a Luau-powered GitHub statistics card plus links to YouTube and the configured Proxmox host.
 
-You can also run it with Compose:
+You can also run it behind Traefik. The Compose deployment reads its private routing values from an untracked `.env` file and expects the configured external Docker network to already exist:
 
 ```sh
 docker compose up --build
@@ -33,20 +33,21 @@ docker run --rm --name stelle -p 8080:8080 \
 ```
 
 Restart the container after changing configuration or scripts. `STELLE_CONFIG` can point to a different YAML file inside the container.
-Widgets choose a width from 1 to 12 columns; their height follows their rendered content.
+Stelle listens on port `8080` by default; set `STELLE_PORT` to override it.
+
+A configuration only needs a `widgets` list. Optional top-level settings are `title` (`Stelle`), `subtitle` (`Your homelab, at a glance.`), `theme` (`system`, `light`, or `dark`), and `accent` (`#8b5cf6`).
 
 ### Link widgets
 
 Link cards support internet services, internal DNS names, IP addresses, and non-standard ports. The browser loads each site's conventional `/favicon.ico` directly.
 
 ```yaml
-- type: link
-  id: router
-  label: Router
-  description: Network administration
-  url: https://192.168.1.1:8443
-  accent: "#38bdf8"
-  columns: 3
+widgets:
+  - type: link
+    label: Router
+    description: Network administration
+    url: https://192.168.1.1:8443
+    accent: "#38bdf8"
 ```
 
 ### Luau widgets
@@ -54,14 +55,14 @@ Link cards support internet services, internal DNS names, IP addresses, and non-
 Luau widgets return a constrained statistics model. Each widget must explicitly allow every network origin it contacts:
 
 ```yaml
-- type: lua
-  id: repository
-  script: widgets/github-stats.luau
-  network_allow:
-    - https://api.github.com
-  settings:
-    repository: robsgh/stelle
-  columns: 6
+widgets:
+  - type: lua
+    id: repository
+    script: widgets/github-stats.luau
+    network_allow:
+      - https://api.github.com
+    settings:
+      repository: robsgh/stelle
 ```
 
 The script receives these globals:
