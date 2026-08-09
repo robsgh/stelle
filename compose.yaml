@@ -1,0 +1,10 @@
+services:
+  stelle:
+    build: .
+    container_name: stelle
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    # Replace the bundled configuration by uncommenting this read-only mount.
+    # volumes:
+    #   - ./config:/config:ro
