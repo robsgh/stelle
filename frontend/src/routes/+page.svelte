@@ -47,6 +47,13 @@
     const date = new Date(value);
     return Number.isNaN(date.valueOf()) ? value : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }
+
+  function gridMaxWidth(cardCount: number): number {
+    const columns = Math.max(1, Math.ceil(Math.sqrt(cardCount)));
+    const cardWidth = 350;
+    const gap = 18;
+    return columns * cardWidth + (columns - 1) * gap;
+  }
 </script>
 
 <svelte:head><title>{dashboard?.title ?? 'Stelle'}</title></svelte:head>
@@ -71,7 +78,11 @@
       <div></div><div></div><div></div>
     </section>
   {:else}
-    <section class="widget-grid" aria-label="Dashboard widgets">
+    <section
+      class="widget-grid"
+      aria-label="Dashboard widgets"
+      style={`--grid-max-width:${gridMaxWidth(dashboard.widgets.length)}px`}
+    >
       {#each dashboard.widgets as widget}
         {#if widget.type === 'link'}
           <a

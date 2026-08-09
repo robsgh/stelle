@@ -109,8 +109,10 @@ button { color: inherit; }
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr));
   align-items: start;
+  width: min(100%, var(--grid-max-width));
   gap: 18px;
   margin-block: auto;
+  margin-inline: auto;
 }
 
 .card {
