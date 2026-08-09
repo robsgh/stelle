@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import CircleAlert from '@lucide/svelte/icons/circle-alert';
-  import ExternalLink from '@lucide/svelte/icons/external-link';
   import LoaderCircle from '@lucide/svelte/icons/loader-circle';
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import Favicon from '$lib/Favicon.svelte';
@@ -11,6 +10,13 @@
   let dashboard: Dashboard | null = null;
   let dashboardError = '';
   let widgetStates: Record<string, WidgetState> = {};
+  let now: Date | null = null;
+
+  onMount(() => {
+    now = new Date();
+    const clock = window.setInterval(() => now = new Date(), 1_000);
+    return () => window.clearInterval(clock);
+  });
 
   onMount(async () => {
     try {
@@ -48,6 +54,25 @@
     return Number.isNaN(date.valueOf()) ? value : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }
 
+  function greeting(date: Date): string {
+    const hour = date.getHours();
+    if (hour < 12) return 'Good morning';
+    if (hour < 18) return 'Good afternoon';
+    return 'Good evening';
+  }
+
+  function currentTime(date: Date): string {
+    return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  }
+
+  function defaultTitle(date: Date | null): string {
+    return date ? greeting(date) : 'Welcome';
+  }
+
+  function defaultSubtitle(date: Date | null): string {
+    return date ? currentTime(date) : '';
+  }
+
   function gridMaxWidth(cardCount: number): number {
     const columns = Math.max(1, Math.ceil(Math.sqrt(cardCount)));
     const cardWidth = 350;
@@ -56,14 +81,14 @@
   }
 </script>
 
-<svelte:head><title>{dashboard?.title ?? 'Stelle'}</title></svelte:head>
+<svelte:head><title>{dashboard?.title ?? defaultTitle(now)}</title></svelte:head>
 
 <main class="shell">
   <header class="masthead">
     <div class="brandmark" aria-hidden="true">S</div>
     <div class="heading">
-      <h1>{dashboard?.title ?? 'Stelle'}</h1>
-      <p>{dashboard?.subtitle ?? 'Your homelab, at a glance.'}</p>
+      <h1>{dashboard?.title ?? defaultTitle(now)}</h1>
+      <p>{dashboard?.subtitle ?? defaultSubtitle(now)}</p>
     </div>
   </header>
 
@@ -96,7 +121,6 @@
               <small>{widget.description}</small>
               <span class="hostname">{new URL(widget.url).host}</span>
             </span>
-            <span class="open-icon"><ExternalLink size={20} /></span>
           </a>
         {:else}
           {@const state = widgetStates[widget.id] ?? { status: 'loading' }}

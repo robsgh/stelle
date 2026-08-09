@@ -13,10 +13,10 @@ use url::Url;
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Dashboard<W> {
-    #[serde(default = "default_title")]
-    pub title: String,
-    #[serde(default = "default_subtitle")]
-    pub subtitle: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtitle: Option<String>,
     #[serde(default)]
     pub theme: Theme,
     #[serde(default = "default_accent")]
@@ -26,14 +26,6 @@ pub struct Dashboard<W> {
 
 type DashboardConfig = Dashboard<WidgetConfig>;
 pub type LoadedConfig = Dashboard<LoadedWidget>;
-
-fn default_title() -> String {
-    "Stelle".into()
-}
-
-fn default_subtitle() -> String {
-    "Your homelab, at a glance.".into()
-}
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -109,7 +101,11 @@ pub fn load(path: &Path) -> Result<LoadedConfig> {
 }
 
 fn validate_and_load(config: DashboardConfig, base: &Path) -> Result<LoadedConfig> {
-    if config.title.trim().is_empty() {
+    if config
+        .title
+        .as_deref()
+        .is_some_and(|title| title.trim().is_empty())
+    {
         bail!("dashboard title cannot be empty");
     }
     let Dashboard {
@@ -242,7 +238,7 @@ mod tests {
     }
 
     #[test]
-    fn minimal_config_uses_dashboard_defaults() {
+    fn minimal_config_defers_headings_to_client_defaults() {
         let config: DashboardConfig = serde_yaml::from_str(
             r#"
                 widgets:
@@ -252,13 +248,15 @@ mod tests {
             "#,
         )
         .unwrap();
-        assert_eq!(config.title, "Stelle");
-        assert_eq!(config.subtitle, "Your homelab, at a glance.");
+        assert_eq!(config.title, None);
+        assert_eq!(config.subtitle, None);
         assert!(matches!(config.theme, Theme::System));
         assert_eq!(config.accent, "#8b5cf6");
 
         let loaded = validate_and_load(config, Path::new(".")).unwrap();
         let json = serde_json::to_value(loaded).unwrap();
+        assert!(json.get("title").is_none());
+        assert!(json.get("subtitle").is_none());
         assert_eq!(json["widgets"][0]["type"], "link");
         assert!(json["widgets"][0].get("id").is_none());
         assert!(json["widgets"][0].get("columns").is_none());
@@ -288,7 +286,7 @@ mod tests {
 
     #[test]
     fn bundled_configuration_loads() {
-        let config = load(Path::new("config/dashboard.yaml")).unwrap();
+        let config = load(Path::new("config-example/dashboard.yaml")).unwrap();
         assert_eq!(config.widgets.len(), 4);
         assert!(config.widgets.iter().any(
             |widget| matches!(widget, LoadedWidget::Lua(widget) if widget.id == "stelle-github")

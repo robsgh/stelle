@@ -18,6 +18,7 @@ Open <http://localhost:8080>. The bundled dashboard contains a Luau-powered GitH
 You can also run it behind Traefik. The Compose deployment reads its private routing values from an untracked `.env` file and expects the configured external Docker network to already exist:
 
 ```sh
+cp -R config-example config
 docker compose up --build
 ```
 
@@ -25,9 +26,10 @@ Stelle has no built-in authentication in this MVP. Keep it on a trusted network 
 
 ## Configure the dashboard
 
-Configuration is loaded once from `/config/dashboard.yaml`. To customize it, edit a local `config` directory and mount it read-only:
+Configuration is loaded once from `/config/dashboard.yaml`. Copy the committed examples into the ignored runtime configuration directory, customize them, and mount that directory read-only:
 
 ```sh
+cp -R config-example config
 docker run --rm --name stelle -p 8080:8080 \
   -v "$PWD/config:/config:ro" stelle
 ```
@@ -35,7 +37,7 @@ docker run --rm --name stelle -p 8080:8080 \
 Restart the container after changing configuration or scripts. `STELLE_CONFIG` can point to a different YAML file inside the container.
 Stelle listens on port `8080` by default; set `STELLE_PORT` to override it.
 
-A configuration only needs a `widgets` list. Optional top-level settings are `title` (`Stelle`), `subtitle` (`Your homelab, at a glance.`), `theme` (`system`, `light`, or `dark`), and `accent` (`#8b5cf6`).
+A configuration only needs a `widgets` list. By default, the heading greets the visitor based on their local time and displays the current time. Optional top-level settings are `title`, `subtitle`, `theme` (`system`, `light`, or `dark`), and `accent` (`#8b5cf6`). A configured title or subtitle replaces its corresponding dynamic default.
 
 ### Link widgets
 

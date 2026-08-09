@@ -16,8 +16,8 @@ export interface LuaWidget {
 export type Widget = LinkWidget | LuaWidget;
 
 export interface Dashboard {
-  title: string;
-  subtitle: string;
+  title?: string;
+  subtitle?: string;
   theme: Theme;
   accent: string;
   widgets: Widget[];

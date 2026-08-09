@@ -71,23 +71,24 @@ button { color: inherit; }
 
 .masthead {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 15px;
+  gap: 13px;
   margin-bottom: 36px;
   text-align: center;
 }
 
 .brandmark {
-  width: 42px;
-  height: 42px;
+  width: 52px;
+  height: 52px;
   display: grid;
   flex: none;
   place-items: center;
-  border-radius: 13px;
+  border-radius: 16px;
   color: white;
   background: var(--accent);
-  font-size: 18px;
+  font-size: 21px;
   font-weight: 650;
   box-shadow: 0 5px 14px color-mix(in srgb, var(--accent) 20%, transparent);
 }
@@ -178,18 +179,6 @@ button:focus-visible,
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.open-icon {
-  align-self: center;
-  margin-left: auto;
-  color: var(--soft);
-  transition: color .16s ease, transform .16s ease;
-}
-
-.link-card:hover .open-icon {
-  color: var(--widget-accent);
-  transform: translate(1px, -1px);
 }
 
 .stats-card {

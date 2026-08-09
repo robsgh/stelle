@@ -1,0 +1,24 @@
+widgets:
+  - type: lua
+    id: stelle-github
+    script: widgets/github-stats.luau
+    network_allow:
+      - https://api.github.com
+
+  - type: link
+    label: YouTube
+    description: Watch videos and subscriptions
+    url: https://www.youtube.com
+    accent: "#ff0033"
+
+  - type: link
+    label: Proxmox
+    description: Manage your virtualization host
+    url: https://proxmox.example.com:8006
+    accent: "#e57000"
+
+  - type: link
+    label: Docker Registry
+    description: Browse your container images
+    url: https://registry.example.com/
+    accent: "#6d7fab"

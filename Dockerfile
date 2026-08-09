@@ -19,7 +19,7 @@ RUN addgroup -S stelle && adduser -S -G stelle -h /app stelle
 WORKDIR /app
 COPY --from=backend /build/target/debug/stelle /usr/local/bin/stelle
 COPY --from=frontend /build/frontend/build /app/public
-COPY config /config
+COPY config-example /config
 RUN chown -R stelle:stelle /app /config
 
 USER stelle

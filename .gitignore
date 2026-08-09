@@ -8,3 +8,4 @@ frontend/build/
 *.log
 .env
 deploy.sh
+config/
