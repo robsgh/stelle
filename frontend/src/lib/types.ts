@@ -2,18 +2,15 @@ export type Theme = 'light' | 'dark' | 'system';
 
 export interface LinkWidget {
   type: 'link';
-  id: string;
   label: string;
   description: string;
   url: string;
   accent: string | null;
-  columns: number;
 }
 
 export interface LuaWidget {
   type: 'lua';
   id: string;
-  columns: number;
 }
 
 export type Widget = LinkWidget | LuaWidget;

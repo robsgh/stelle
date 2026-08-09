@@ -10,23 +10,29 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DashboardConfig {
-    pub dashboard: DashboardSettings,
-    pub widgets: Vec<WidgetConfig>,
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct DashboardSettings {
+pub struct Dashboard<W> {
+    #[serde(default = "default_title")]
     pub title: String,
-    #[serde(default)]
+    #[serde(default = "default_subtitle")]
     pub subtitle: String,
     #[serde(default)]
     pub theme: Theme,
     #[serde(default = "default_accent")]
     pub accent: String,
+    pub widgets: Vec<W>,
+}
+
+type DashboardConfig = Dashboard<WidgetConfig>;
+pub type LoadedConfig = Dashboard<LoadedWidget>;
+
+fn default_title() -> String {
+    "Stelle".into()
+}
+
+fn default_subtitle() -> String {
+    "Your homelab, at a glance.".into()
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize)]
@@ -41,14 +47,11 @@ pub enum Theme {
 fn default_accent() -> String {
     "#8b5cf6".into()
 }
-fn default_columns() -> u8 {
-    4
-}
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
 pub enum WidgetConfig {
-    Link(LinkWidget),
+    Link(LinkConfig),
     Lua {
         id: String,
         script: String,
@@ -56,31 +59,7 @@ pub enum WidgetConfig {
         settings: BTreeMap<String, Value>,
         #[serde(default)]
         network_allow: Vec<String>,
-        #[serde(default = "default_columns")]
-        columns: u8,
     },
-}
-
-impl WidgetConfig {
-    fn id(&self) -> &str {
-        match self {
-            Self::Link(widget) => &widget.id,
-            Self::Lua { id, .. } => id,
-        }
-    }
-    fn columns(&self) -> u8 {
-        match self {
-            Self::Link(widget) => widget.columns,
-            Self::Lua { columns, .. } => *columns,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct LoadedConfig {
-    #[serde(flatten)]
-    pub dashboard: DashboardSettings,
-    pub widgets: Vec<LoadedWidget>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -90,27 +69,23 @@ pub enum LoadedWidget {
     Lua(LuaWidget),
 }
 
-impl LoadedWidget {
-    pub fn id(&self) -> &str {
-        match self {
-            Self::Link(w) => &w.id,
-            Self::Lua(w) => &w.id,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct LinkWidget {
-    pub id: String,
+pub struct LinkConfig {
     pub label: String,
     #[serde(default)]
     pub description: String,
     pub url: String,
     #[serde(default)]
     pub accent: Option<String>,
-    #[serde(default = "default_columns")]
-    pub columns: u8,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LinkWidget {
+    pub label: String,
+    pub description: String,
+    pub url: String,
+    pub accent: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -122,7 +97,6 @@ pub struct LuaWidget {
     pub settings: BTreeMap<String, Value>,
     #[serde(skip)]
     pub network_allow: Vec<Url>,
-    pub columns: u8,
 }
 
 pub fn load(path: &Path) -> Result<LoadedConfig> {
@@ -135,36 +109,46 @@ pub fn load(path: &Path) -> Result<LoadedConfig> {
 }
 
 fn validate_and_load(config: DashboardConfig, base: &Path) -> Result<LoadedConfig> {
-    if config.dashboard.title.trim().is_empty() {
+    if config.title.trim().is_empty() {
         bail!("dashboard title cannot be empty");
     }
-    let mut ids = std::collections::HashSet::new();
-    let mut loaded = Vec::with_capacity(config.widgets.len());
+    let Dashboard {
+        title,
+        subtitle,
+        theme,
+        accent,
+        widgets,
+    } = config;
+    let mut script_ids = std::collections::HashSet::new();
+    let mut loaded = Vec::with_capacity(widgets.len());
 
-    for widget in config.widgets {
-        if widget.id().trim().is_empty() {
-            bail!("widget id cannot be empty");
-        }
-        if !ids.insert(widget.id().to_owned()) {
-            bail!("duplicate widget id: {}", widget.id());
-        }
-        if !(1..=12).contains(&widget.columns()) {
-            bail!("widget {} must span between 1 and 12 columns", widget.id());
-        }
-
+    for widget in widgets {
         match widget {
             WidgetConfig::Link(widget) => {
                 validate_http_url(&widget.url)
-                    .with_context(|| format!("invalid link URL for {}", widget.id))?;
-                loaded.push(LoadedWidget::Link(widget));
+                    .with_context(|| format!("invalid link URL for {}", widget.label))?;
+                if widget.label.trim().is_empty() {
+                    bail!("link label cannot be empty");
+                }
+                loaded.push(LoadedWidget::Link(LinkWidget {
+                    label: widget.label,
+                    description: widget.description,
+                    url: widget.url,
+                    accent: widget.accent,
+                }));
             }
             WidgetConfig::Lua {
                 id,
                 script,
                 settings,
                 network_allow,
-                columns,
             } => {
+                if id.trim().is_empty() {
+                    bail!("script widget id cannot be empty");
+                }
+                if !script_ids.insert(id.clone()) {
+                    bail!("duplicate script widget id: {id}");
+                }
                 if Path::new(&script).is_absolute()
                     || Path::new(&script)
                         .components()
@@ -196,13 +180,15 @@ fn validate_and_load(config: DashboardConfig, base: &Path) -> Result<LoadedConfi
                     source,
                     settings,
                     network_allow,
-                    columns,
                 }));
             }
         }
     }
-    Ok(LoadedConfig {
-        dashboard: config.dashboard,
+    Ok(Dashboard {
+        title,
+        subtitle,
+        theme,
+        accent,
         widgets: loaded,
     })
 }
@@ -244,16 +230,77 @@ mod tests {
     }
 
     #[test]
+    fn rejects_widget_columns() {
+        let config = r#"
+            widgets:
+              - type: link
+                label: Example
+                url: https://example.com
+                columns: 6
+        "#;
+        assert!(serde_yaml::from_str::<DashboardConfig>(config).is_err());
+    }
+
+    #[test]
+    fn minimal_config_uses_dashboard_defaults() {
+        let config: DashboardConfig = serde_yaml::from_str(
+            r#"
+                widgets:
+                  - type: link
+                    label: Example
+                    url: https://example.com
+            "#,
+        )
+        .unwrap();
+        assert_eq!(config.title, "Stelle");
+        assert_eq!(config.subtitle, "Your homelab, at a glance.");
+        assert!(matches!(config.theme, Theme::System));
+        assert_eq!(config.accent, "#8b5cf6");
+
+        let loaded = validate_and_load(config, Path::new(".")).unwrap();
+        let json = serde_json::to_value(loaded).unwrap();
+        assert_eq!(json["widgets"][0]["type"], "link");
+        assert!(json["widgets"][0].get("id").is_none());
+        assert!(json["widgets"][0].get("columns").is_none());
+    }
+
+    #[test]
+    fn rejects_unused_link_ids() {
+        let config = r#"
+            widgets:
+              - type: link
+                id: example
+                label: Example
+                url: https://example.com
+        "#;
+        assert!(serde_yaml::from_str::<DashboardConfig>(config).is_err());
+    }
+
+    #[test]
+    fn rejects_nested_dashboard_settings() {
+        let config = r#"
+            dashboard:
+              title: Test
+            widgets: []
+        "#;
+        assert!(serde_yaml::from_str::<DashboardConfig>(config).is_err());
+    }
+
+    #[test]
     fn bundled_configuration_loads() {
         let config = load(Path::new("config/dashboard.yaml")).unwrap();
-        assert_eq!(config.widgets.len(), 3);
-        assert!(
-            config
-                .widgets
-                .iter()
-                .any(|widget| widget.id() == "stelle-github")
-        );
-        assert!(config.widgets.iter().any(|widget| widget.id() == "youtube"));
-        assert!(config.widgets.iter().any(|widget| widget.id() == "proxmox"));
+        assert_eq!(config.widgets.len(), 4);
+        assert!(config.widgets.iter().any(
+            |widget| matches!(widget, LoadedWidget::Lua(widget) if widget.id == "stelle-github")
+        ));
+        assert!(config.widgets.iter().any(
+            |widget| matches!(widget, LoadedWidget::Link(widget) if widget.label == "YouTube")
+        ));
+        assert!(config.widgets.iter().any(
+            |widget| matches!(widget, LoadedWidget::Link(widget) if widget.label == "Proxmox")
+        ));
+        assert!(config.widgets.iter().any(
+            |widget| matches!(widget, LoadedWidget::Link(widget) if widget.label == "Docker Registry")
+        ));
     }
 }

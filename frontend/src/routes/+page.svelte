@@ -72,14 +72,14 @@
     </section>
   {:else}
     <section class="widget-grid" aria-label="Dashboard widgets">
-      {#each dashboard.widgets as widget (widget.id)}
+      {#each dashboard.widgets as widget}
         {#if widget.type === 'link'}
           <a
             class="card link-card"
             href={widget.url}
             target="_blank"
             rel="noopener noreferrer"
-            style={`--columns:${widget.columns};--widget-accent:${widget.accent ?? dashboard.accent}`}
+            style={`--widget-accent:${widget.accent ?? dashboard.accent}`}
           >
             <Favicon url={widget.url} />
             <span class="link-copy">
@@ -91,7 +91,7 @@
           </a>
         {:else}
           {@const state = widgetStates[widget.id] ?? { status: 'loading' }}
-          <article class="card stats-card" style={`--columns:${widget.columns}`}>
+          <article class="card stats-card">
             {#if state.status === 'loading'}
               <div class="card-top">
                 <div><span class="skeleton title-skeleton"></span><span class="skeleton text-skeleton"></span></div>

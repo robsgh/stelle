@@ -22,19 +22,15 @@ pub async fn refresh_widget(
         .config
         .widgets
         .iter()
-        .find(|widget| widget.id() == id)
+        .find_map(|widget| match widget {
+            LoadedWidget::Lua(widget) if widget.id == id => Some(widget),
+            _ => None,
+        })
         .ok_or(ApiError(
             StatusCode::NOT_FOUND,
             "widget_not_found",
             "Widget was not found",
         ))?;
-    let LoadedWidget::Lua(widget) = widget else {
-        return Err(ApiError(
-            StatusCode::BAD_REQUEST,
-            "widget_not_scripted",
-            "Link widgets cannot be refreshed",
-        ));
-    };
     let content = tokio::time::timeout(TIME_LIMIT, state.lua.execute(widget))
         .await
         .map_err(|_| {

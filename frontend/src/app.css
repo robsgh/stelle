@@ -102,13 +102,12 @@ button { color: inherit; }
 
 .widget-grid {
   display: grid;
-  grid-template-columns: repeat(12, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: start;
   gap: 18px;
 }
 
 .card {
-  grid-column: span var(--columns);
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: 18px;
@@ -410,8 +409,7 @@ a.widget-title:hover { color: var(--accent); }
 }
 
 @media (max-width: 900px) {
-  .widget-grid { grid-template-columns: repeat(6, 1fr); }
-  .card { grid-column: span min(var(--columns), 6); }
+  .widget-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 620px) {
@@ -421,7 +419,7 @@ a.widget-title:hover { color: var(--accent); }
   }
 
   .masthead { margin-bottom: 28px; }
-  .widget-grid { display: flex; flex-direction: column; }
+  .widget-grid { grid-template-columns: minmax(0, 1fr); }
 
   .stats-card {
     padding: 21px;

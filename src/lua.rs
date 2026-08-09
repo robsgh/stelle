@@ -351,7 +351,6 @@ mod tests {
             .into(),
             settings: std::collections::BTreeMap::new(),
             network_allow: vec![],
-            columns: 4,
         };
         let runtime = LuaRuntime::new();
         let task = tokio::spawn(async move { runtime.execute(&widget).await });
@@ -381,7 +380,6 @@ mod tests {
             .into(),
             settings: std::collections::BTreeMap::from([("count".into(), JsonValue::from(3))]),
             network_allow: vec![],
-            columns: 4,
         };
 
         let content = LuaRuntime::new().execute(&widget).await.unwrap();
