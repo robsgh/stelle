@@ -104,7 +104,6 @@
             {:else}
               <div class="card-top">
                 <div>
-                  <span class="widget-kind">Lua widget</span>
                   {#if state.content.href}
                     <a class="widget-title" href={state.content.href} target="_blank" rel="noopener noreferrer">{state.content.title}</a>
                   {:else}<h2 class="widget-title">{state.content.title}</h2>{/if}

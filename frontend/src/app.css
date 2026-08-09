@@ -199,17 +199,6 @@ button:focus-visible,
 
 .card-top > div { min-width: 0; }
 
-.widget-kind {
-  display: inline-flex;
-  margin-bottom: 9px;
-  padding: 3px 8px;
-  border-radius: 99px;
-  color: var(--muted);
-  background: var(--surface-soft);
-  font-size: 10px;
-  font-weight: 550;
-}
-
 .widget-title {
   display: block;
   width: fit-content;
