@@ -152,11 +152,16 @@ button:focus-visible,
 
 .link-copy small {
   margin-top: 3px;
-  overflow: hidden;
   color: var(--muted);
   font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.link-copy strong,
+.link-copy small,
+.widget-title,
+.widget-subtitle {
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .hostname {
@@ -192,6 +197,8 @@ button:focus-visible,
   gap: 20px;
 }
 
+.card-top > div { min-width: 0; }
+
 .widget-kind {
   display: inline-flex;
   margin-bottom: 9px;
@@ -219,11 +226,8 @@ a.widget-title:hover { color: var(--accent); }
 .widget-subtitle {
   max-width: 560px;
   margin: 5px 0 0;
-  overflow: hidden;
   color: var(--muted);
   font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .icon-button,
