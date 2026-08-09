@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import Favicon from '$lib/Favicon.svelte';
   import Icon from '$lib/Icon.svelte';
   import type { Dashboard, LuaWidget, WidgetState } from '$lib/types';
   import '../app.css';
@@ -77,6 +78,7 @@
             rel="noopener noreferrer"
             style={`--columns:${widget.columns};--widget-accent:${widget.accent ?? dashboard.accent}`}
           >
+            <Favicon url={widget.url} />
             <span class="link-copy">
               <strong>{widget.label}</strong>
               <small>{widget.description}</small>

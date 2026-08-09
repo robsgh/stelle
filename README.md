@@ -37,7 +37,7 @@ Widgets choose a width from 1 to 12 columns; their height follows their rendered
 
 ### Link widgets
 
-Link cards support internet services, internal DNS names, IP addresses, and non-standard ports.
+Link cards support internet services, internal DNS names, IP addresses, and non-standard ports. The browser loads each site's conventional `/favicon.ico` directly.
 
 ```yaml
 - type: link
