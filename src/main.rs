@@ -59,15 +59,7 @@ async fn main() -> Result<()> {
         config,
         lua: LuaRuntime::new(),
     });
-    let index = static_dir.join("index.html");
-    let static_files = ServeDir::new(&static_dir).not_found_service(ServeFile::new(index));
-    let app = Router::new()
-        .route("/api/dashboard", get(api::dashboard))
-        .route("/api/widgets/{id}/refresh", post(api::refresh_widget))
-        .route("/healthz", get(api::health))
-        .fallback_service(static_files)
-        .layer(TraceLayer::new_for_http())
-        .with_state(state);
+    let app = build_app(state, &static_dir);
 
     tracing::info!(%address, config = %config_path.display(), "stelle is ready");
     let listener = tokio::net::TcpListener::bind(address).await?;
@@ -75,6 +67,18 @@ async fn main() -> Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
+}
+
+fn build_app(state: Arc<AppState>, static_dir: &Path) -> Router {
+    let index = static_dir.join("index.html");
+    let static_files = ServeDir::new(static_dir).not_found_service(ServeFile::new(index));
+    Router::new()
+        .route("/api/dashboard", get(api::dashboard))
+        .route("/api/widgets/{id}/refresh", post(api::refresh_widget))
+        .route("/healthz", get(api::health))
+        .fallback_service(static_files)
+        .layer(TraceLayer::new_for_http())
+        .with_state(state)
 }
 
 fn watch_config(
@@ -120,4 +124,106 @@ async fn shutdown_signal() {
     #[cfg(not(unix))]
     let terminate = std::future::pending::<()>();
     tokio::select! { _ = ctrl_c => {}, _ = terminate => {} }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+    };
+    use http_body_util::BodyExt;
+    use serde_json::Value;
+    use tower::ServiceExt;
+
+    use super::*;
+    use crate::config::{Dashboard, LoadedWidget, LuaWidget, Theme};
+
+    fn test_app(widgets: Vec<LoadedWidget>) -> Router {
+        let config = Dashboard {
+            title: Some("Test".into()),
+            subtitle: None,
+            theme: Theme::System,
+            accent: "#8b5cf6".into(),
+            widgets,
+        };
+        let state = Arc::new(AppState {
+            config: Arc::new(RwLock::new(config)),
+            lua: LuaRuntime::new(),
+        });
+        build_app(state, Path::new("frontend/build"))
+    }
+
+    async fn json_body(response: axum::response::Response) -> Value {
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn health_endpoint_reports_ok() {
+        let response = test_app(vec![])
+            .oneshot(Request::get("/healthz").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            json_body(response).await,
+            serde_json::json!({ "status": "ok" })
+        );
+    }
+
+    #[tokio::test]
+    async fn dashboard_endpoint_omits_private_widget_data() {
+        let widget = LoadedWidget::Lua(LuaWidget {
+            id: "private".into(),
+            source: "return {}".into(),
+            settings: BTreeMap::from([("token".into(), Value::from("secret"))]),
+            network_allow: vec![url::Url::parse("https://example.com").unwrap()],
+        });
+        let response = test_app(vec![widget])
+            .oneshot(Request::get("/api/dashboard").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        assert_eq!(
+            body["widgets"][0],
+            serde_json::json!({ "type": "lua", "id": "private" })
+        );
+        assert!(!body.to_string().contains("secret"));
+        assert!(!body.to_string().contains("example.com"));
+    }
+
+    #[tokio::test]
+    async fn widget_failures_return_the_public_api_error() {
+        let widget = LoadedWidget::Lua(LuaWidget {
+            id: "failing".into(),
+            source: "error('private failure detail')".into(),
+            settings: BTreeMap::new(),
+            network_allow: vec![],
+        });
+        let response = test_app(vec![widget])
+            .oneshot(
+                Request::post("/api/widgets/failing/refresh")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        assert_eq!(
+            json_body(response).await,
+            serde_json::json!({
+                "error": {
+                    "code": "widget_execution_failed",
+                    "message": "The widget could not be refreshed"
+                }
+            })
+        );
+    }
 }

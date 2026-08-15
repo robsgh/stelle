@@ -12,12 +12,12 @@ RUN apk add --no-cache build-base cmake
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
-RUN cargo build --locked
+RUN cargo build --locked --release
 
 FROM alpine:3.23
 RUN addgroup -S stelle && adduser -S -G stelle -h /app stelle
 WORKDIR /app
-COPY --from=backend /build/target/debug/stelle /usr/local/bin/stelle
+COPY --from=backend /build/target/release/stelle /usr/local/bin/stelle
 COPY --from=frontend /build/frontend/build /app/public
 COPY config-example /config
 RUN chown -R stelle:stelle /app /config

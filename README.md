@@ -117,7 +117,23 @@ cargo run
 
 For frontend hot reload, run `npm run dev` in `frontend/`. Vite sends API requests to port `8080`.
 
-Run the checks with `cargo test`, `npm run check`, and `npm run build`.
+Run all release checks, including a container smoke test, from the repository root:
+
+```sh
+./scripts/verify.sh
+```
+
+The individual checks are `cargo fmt --all --check`, `cargo clippy`, `cargo test`, `npm audit --audit-level=moderate`, `npm run check`, and `npm run build`.
+
+## Release process
+
+Stelle releases are prepared and verified locally; the repository does not use hosted CI or publish images to a container registry. Verify a clean release commit and create the version tag:
+
+```sh
+./scripts/verify.sh
+git status --short
+git tag -a v0.1.0 -m "Stelle v0.1.0"
+```
 
 ## Environment variables
 
