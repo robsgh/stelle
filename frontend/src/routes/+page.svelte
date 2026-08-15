@@ -4,7 +4,7 @@
   import LoaderCircle from '@lucide/svelte/icons/loader-circle';
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import Favicon from '$lib/Favicon.svelte';
-  import type { Dashboard, LuaWidget, WidgetState } from '$lib/types';
+  import type { Dashboard, LinkWidget, LuaWidget, WidgetState } from '$lib/types';
   import '../app.css';
 
   let dashboard: Dashboard | null = null;
@@ -99,6 +99,14 @@
     const gap = 18;
     return columns * cardWidth + (columns - 1) * gap;
   }
+
+  function links(dashboard: Dashboard): LinkWidget[] {
+    return dashboard.widgets.filter((widget): widget is LinkWidget => widget.type === 'link');
+  }
+
+  function smartWidgets(dashboard: Dashboard): LuaWidget[] {
+    return dashboard.widgets.filter((widget): widget is LuaWidget => widget.type === 'lua');
+  }
 </script>
 
 <svelte:head><title>{dashboard?.title ?? defaultTitle(now)}</title></svelte:head>
@@ -123,13 +131,16 @@
       <div></div><div></div><div></div>
     </section>
   {:else}
-    <section
-      class="widget-grid"
-      aria-label="Dashboard widgets"
-      style={`--grid-columns:${gridColumns(dashboard.widgets.length)};--grid-max-width:${gridMaxWidth(dashboard.widgets.length)}px`}
-    >
-      {#each dashboard.widgets as widget}
-        {#if widget.type === 'link'}
+    {@const linkWidgets = links(dashboard)}
+    {@const dataWidgets = smartWidgets(dashboard)}
+    <div class="dashboard-content">
+      {#if linkWidgets.length > 0}
+        <section
+          class="widget-grid"
+          aria-label="Links"
+          style={`--grid-columns:${gridColumns(linkWidgets.length)};--grid-max-width:${gridMaxWidth(linkWidgets.length)}px`}
+        >
+          {#each linkWidgets as widget}
           <a
             class="card link-card"
             href={widget.url}
@@ -142,12 +153,21 @@
               <span class="hostname">{new URL(widget.url).host}</span>
             </span>
           </a>
-        {:else}
+          {/each}
+        </section>
+      {/if}
+
+      {#if dataWidgets.length > 0}
+        <section class="smart-stack" aria-label="Live data widgets">
+          {#each dataWidgets as widget}
           {@const state = widgetStates[widget.id] ?? { status: 'loading' }}
-          <article class="card stats-card">
+          <article class="card stats-card smart-card">
             {#if state.status === 'loading'}
               <div class="card-top">
-                <div><span class="skeleton title-skeleton"></span><span class="skeleton text-skeleton"></span></div>
+                <div>
+                  <span class="data-label"><span></span>Live data</span>
+                  <span class="skeleton title-skeleton"></span><span class="skeleton text-skeleton"></span>
+                </div>
                 <LoaderCircle class="spinner" size={21} aria-label="Refreshing" />
               </div>
               <div class="metrics loading-metrics"><span></span><span></span><span></span></div>
@@ -160,6 +180,7 @@
             {:else}
               <div class="card-top">
                 <div>
+                  <span class="data-label"><span></span>Live data</span>
                   {#if state.content.href}
                     <a class="widget-title" href={state.content.href}>{state.content.title}</a>
                   {:else}<h2 class="widget-title">{state.content.title}</h2>{/if}
@@ -183,9 +204,10 @@
               </div>
             {/if}
           </article>
-        {/if}
-      {/each}
-    </section>
+          {/each}
+        </section>
+      {/if}
+    </div>
   {/if}
 
 </main>

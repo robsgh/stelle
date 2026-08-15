@@ -109,6 +109,25 @@ return {
 
 Each refresh uses a new sandbox with memory, execution-time, response-size, and network limits. Widgets cannot access the file system, processes, environment variables, persistent storage, or raw sockets.
 
+#### Nearby aircraft
+
+The bundled `nearby-aircraft.luau` widget reads a tar1090 or ultrafeeder aircraft feed directly:
+
+```yaml
+widgets:
+  - type: lua
+    id: nearby-aircraft
+    script: widgets/nearby-aircraft.luau
+    cache_ttl: 60
+    network_allow:
+      - https://planes.example.com
+    settings:
+      base_url: https://planes.example.com
+      max_age: 60
+```
+
+The card shows one recent aircraft with its signal or distance, altitude, speed, heading, and vertical rate. It links directly to that aircraft in tar1090. By default, the widget selects the strongest recent aircraft with a position. Set `receiver_lat`, `receiver_lon`, and optionally `radius_nm` under `settings` to select the closest aircraft within a radius instead. Receiver coordinates stay in the server-side configuration and are not returned to the browser.
+
 ## Compose deployment
 
 `compose.yaml` deploys a prebuilt image behind Traefik. It expects an external Docker network and the required `STELLE_*` values in an untracked `.env` file.

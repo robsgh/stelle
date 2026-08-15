@@ -30,6 +30,16 @@ widgets:
     url: https://registry.example.com/
     accent: "#6d7fab"
 
+  - type: lua
+    id: nearby-aircraft
+    script: widgets/nearby-aircraft.luau
+    cache_ttl: 60
+    network_allow:
+      - https://planes.example.com
+    settings:
+      base_url: https://planes.example.com
+      max_age: 60
+
   - type: traefik
     id: traefik-services
     api_url: https://traefik.example.com
