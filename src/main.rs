@@ -14,6 +14,10 @@ use std::{
 use anyhow::{Context, Result};
 use axum::{
     Router,
+    extract::Request,
+    http::{HeaderValue, StatusCode, header},
+    middleware::{self, Next},
+    response::Response,
     routing::{get, post},
 };
 use notify_debouncer_mini::{
@@ -36,6 +40,10 @@ struct CachedWidget {
 }
 
 type WidgetCache = Arc<RwLock<HashMap<String, CachedWidget>>>;
+
+const NO_CACHE: &str = "no-cache";
+const NO_STORE: &str = "no-store";
+const IMMUTABLE_CACHE: &str = "public, max-age=31536000, immutable";
 
 pub struct AppState {
     config: Arc<RwLock<LoadedConfig>>,
@@ -93,8 +101,29 @@ fn build_app(state: Arc<AppState>, static_dir: &Path) -> Router {
         .route("/api/widgets/{id}/refresh", post(api::refresh_widget))
         .route("/healthz", get(api::health))
         .fallback_service(static_files)
+        .layer(middleware::from_fn(cache_control))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
+}
+
+async fn cache_control(request: Request, next: Next) -> Response {
+    let path = request.uri().path().to_owned();
+    let mut response = next.run(request).await;
+    let policy = cache_policy(&path, response.status());
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static(policy));
+    response
+}
+
+fn cache_policy(path: &str, status: StatusCode) -> &'static str {
+    if path.starts_with("/api/") || path == "/healthz" {
+        NO_STORE
+    } else if status.is_success() && path.starts_with("/_app/immutable/") {
+        IMMUTABLE_CACHE
+    } else {
+        NO_CACHE
+    }
 }
 
 fn watch_config(
@@ -219,6 +248,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], NO_STORE);
         let body = json_body(response).await;
         assert_eq!(
             body["widgets"][0],
@@ -226,6 +256,23 @@ mod tests {
         );
         assert!(!body.to_string().contains("secret"));
         assert!(!body.to_string().contains("example.com"));
+    }
+
+    #[test]
+    fn cache_policy_revalidates_html_and_missing_assets() {
+        assert_eq!(cache_policy("/", StatusCode::OK), NO_CACHE);
+        assert_eq!(
+            cache_policy("/_app/immutable/assets/old.css", StatusCode::NOT_FOUND),
+            NO_CACHE
+        );
+    }
+
+    #[test]
+    fn cache_policy_keeps_successful_fingerprinted_assets_immutable() {
+        assert_eq!(
+            cache_policy("/_app/immutable/assets/app.abc123.css", StatusCode::OK),
+            IMMUTABLE_CACHE
+        );
     }
 
     #[tokio::test]
