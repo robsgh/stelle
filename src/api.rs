@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use axum::{
     Json,
@@ -9,20 +9,127 @@ use axum::{
 use serde_json::json;
 
 use crate::{
-    AppState, CachedWidget,
-    config::{LoadedWidget, LuaWidget},
+    AppState, CachedDiscovery, CachedWidget,
+    config::{LinkWidget, LoadedWidget, LuaWidget, TraefikWidget},
     lua::{StatsContent, TIME_LIMIT},
+    traefik,
 };
 
 pub async fn dashboard(State(state): State<Arc<AppState>>) -> Response {
-    Json(
-        state
-            .config
-            .read()
-            .expect("configuration lock poisoned")
-            .clone(),
-    )
-    .into_response()
+    let mut dashboard = state
+        .config
+        .read()
+        .expect("configuration lock poisoned")
+        .clone();
+    let mut hosts = dashboard
+        .widgets
+        .iter()
+        .filter_map(|widget| match widget {
+            LoadedWidget::Link(link) => url::Url::parse(&link.url)
+                .ok()
+                .and_then(|url| url.host_str().map(str::to_ascii_lowercase)),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
+    let mut widgets = Vec::new();
+
+    for widget in dashboard.widgets {
+        match widget {
+            LoadedWidget::Traefik(discovery) => {
+                for link in discovered_links(&state, &discovery).await {
+                    let Some(host) = url::Url::parse(&link.url)
+                        .ok()
+                        .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
+                    else {
+                        continue;
+                    };
+                    if hosts.insert(host) {
+                        widgets.push(LoadedWidget::Link(link));
+                    }
+                }
+            }
+            widget => widgets.push(widget),
+        }
+    }
+    dashboard.widgets = widgets;
+    Json(dashboard).into_response()
+}
+
+struct DiscoveryHit {
+    links: Vec<LinkWidget>,
+    fresh: bool,
+}
+
+async fn discovered_links(state: &AppState, widget: &TraefikWidget) -> Vec<LinkWidget> {
+    if let Some(cached) = cached_discovery(state, widget)
+        && cached.fresh
+    {
+        return cached.links;
+    }
+
+    let lock = widget_lock(state, &widget.id);
+    let _guard = lock.lock().await;
+    if let Some(cached) = cached_discovery(state, widget)
+        && cached.fresh
+    {
+        return cached.links;
+    }
+
+    let stale = cached_discovery(state, widget);
+    match traefik::discover(widget).await {
+        Ok(links) => {
+            store_discovery(state, widget, links.clone());
+            links
+        }
+        Err(error) if stale.is_some() => {
+            tracing::warn!(widget = %widget.id, %error, "Traefik discovery failed; using stale links");
+            stale.expect("stale discovery disappeared").links
+        }
+        Err(error) => {
+            tracing::warn!(widget = %widget.id, %error, "Traefik discovery failed");
+            Vec::new()
+        }
+    }
+}
+
+fn cached_discovery(state: &AppState, widget: &TraefikWidget) -> Option<DiscoveryHit> {
+    let cache = state
+        .discovery_cache
+        .read()
+        .expect("discovery cache lock poisoned");
+    let cached = cache.get(&widget.id)?;
+    if cached.widget != *widget {
+        return None;
+    }
+    Some(DiscoveryHit {
+        links: cached.links.clone(),
+        fresh: cached.refreshed_at.elapsed() < Duration::from_secs(widget.cache_ttl),
+    })
+}
+
+fn store_discovery(state: &AppState, widget: &TraefikWidget, links: Vec<LinkWidget>) {
+    let still_current = state
+        .config
+        .read()
+        .expect("configuration lock poisoned")
+        .widgets
+        .iter()
+        .any(|candidate| matches!(candidate, LoadedWidget::Traefik(current) if current == widget));
+    if !still_current {
+        return;
+    }
+    state
+        .discovery_cache
+        .write()
+        .expect("discovery cache lock poisoned")
+        .insert(
+            widget.id.clone(),
+            CachedDiscovery {
+                widget: widget.clone(),
+                links,
+                refreshed_at: std::time::Instant::now(),
+            },
+        );
 }
 
 pub async fn widget(

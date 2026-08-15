@@ -49,6 +49,22 @@ widgets:
 
 Link URLs must use HTTP or HTTPS. The browser requests `/favicon.ico` from each link host.
 
+### Traefik discovery
+
+A Traefik widget discovers enabled `Host(...)` HTTP routers and expands them into ordinary link cards. Stelle reads Traefik's HTTP API; it does not need access to the Docker socket.
+
+```yaml
+widgets:
+  - type: traefik
+    id: traefik-services
+    api_url: https://traefik.example.com
+    cache_ttl: 300
+    exclude_hosts:
+      - stelle.example.com
+```
+
+The Traefik dashboard API must be enabled and reachable from Stelle. Discovery runs lazily on the first dashboard request, caches successful results for `cache_ttl` seconds, and does not poll. Disabled routers, `HostRegexp(...)` rules, duplicate hosts, excluded hosts, and links already configured elsewhere are omitted. If a refresh fails, Stelle keeps the last successful discovery result.
+
 ### Luau widgets
 
 A Luau widget gets data on the server and returns a statistics card. Each network origin must be present in `network_allow`.

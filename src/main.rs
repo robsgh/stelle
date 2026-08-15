@@ -1,6 +1,7 @@
 mod api;
 mod config;
 mod lua;
+mod traefik;
 
 use std::{
     collections::HashMap,
@@ -8,7 +9,7 @@ use std::{
     net::{Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, RwLock},
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use anyhow::{Context, Result};
@@ -20,9 +21,9 @@ use axum::{
     response::Response,
     routing::{get, post},
 };
-use notify_debouncer_mini::{
-    DebounceEventResult, Debouncer, new_debouncer,
-    notify::{RecommendedWatcher, RecursiveMode},
+use notify_debouncer_mini::notify::{
+    Error as NotifyError, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
+    recommended_watcher,
 };
 use tower_http::{
     services::{ServeDir, ServeFile},
@@ -30,7 +31,7 @@ use tower_http::{
 };
 use tracing_subscriber::EnvFilter;
 
-use config::LoadedConfig;
+use config::{LinkWidget, LoadedConfig, TraefikWidget};
 use lua::{LuaRuntime, StatsContent};
 
 struct CachedWidget {
@@ -39,7 +40,14 @@ struct CachedWidget {
     refreshed_at: Instant,
 }
 
+struct CachedDiscovery {
+    widget: TraefikWidget,
+    links: Vec<LinkWidget>,
+    refreshed_at: Instant,
+}
+
 type WidgetCache = Arc<RwLock<HashMap<String, CachedWidget>>>;
+type DiscoveryCache = Arc<RwLock<HashMap<String, CachedDiscovery>>>;
 
 const NO_CACHE: &str = "no-cache";
 const NO_STORE: &str = "no-store";
@@ -49,6 +57,7 @@ pub struct AppState {
     config: Arc<RwLock<LoadedConfig>>,
     lua: LuaRuntime,
     widget_cache: WidgetCache,
+    discovery_cache: DiscoveryCache,
     widget_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
@@ -74,12 +83,18 @@ async fn main() -> Result<()> {
 
     let config = Arc::new(RwLock::new(config::load(&config_path)?));
     let widget_cache = Arc::new(RwLock::new(HashMap::new()));
-    let _config_watcher =
-        watch_config(&config_path, Arc::clone(&config), Arc::clone(&widget_cache))?;
+    let discovery_cache = Arc::new(RwLock::new(HashMap::new()));
+    let _config_watcher = watch_config(
+        &config_path,
+        Arc::clone(&config),
+        Arc::clone(&widget_cache),
+        Arc::clone(&discovery_cache),
+    )?;
     let state = Arc::new(AppState {
         config,
         lua: LuaRuntime::new(),
         widget_cache,
+        discovery_cache,
         widget_locks: Mutex::new(HashMap::new()),
     });
     let app = build_app(state, &static_dir);
@@ -130,28 +145,40 @@ fn watch_config(
     path: &Path,
     config: Arc<RwLock<LoadedConfig>>,
     widget_cache: WidgetCache,
-) -> Result<Debouncer<RecommendedWatcher>> {
+    discovery_cache: DiscoveryCache,
+) -> Result<RecommendedWatcher> {
     let config_path = path.to_owned();
-    let mut watcher = new_debouncer(
-        Duration::from_millis(500),
-        move |event: DebounceEventResult| match event {
-            Ok(_) => match config::load(&config_path) {
-                Ok(updated) => {
-                    *config.write().expect("configuration lock poisoned") = updated;
-                    widget_cache
-                        .write()
-                        .expect("widget cache lock poisoned")
-                        .clear();
-                    tracing::info!(config = %config_path.display(), "configuration reloaded");
+    let mut watcher = recommended_watcher(
+        move |event: std::result::Result<Event, NotifyError>| match event {
+            Ok(event)
+                if matches!(
+                    event.kind,
+                    EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
+                ) =>
+            {
+                match config::load(&config_path) {
+                    Ok(updated) => {
+                        *config.write().expect("configuration lock poisoned") = updated;
+                        widget_cache
+                            .write()
+                            .expect("widget cache lock poisoned")
+                            .clear();
+                        discovery_cache
+                            .write()
+                            .expect("discovery cache lock poisoned")
+                            .clear();
+                        tracing::info!(config = %config_path.display(), "configuration reloaded");
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "configuration reload failed; keeping previous configuration");
+                    }
                 }
-                Err(error) => {
-                    tracing::warn!(%error, "configuration reload failed; keeping previous configuration");
-                }
-            },
+            }
+            Ok(_) => {}
             Err(error) => tracing::warn!(%error, "configuration watch failed"),
         },
     )?;
-    watcher.watcher().watch(
+    watcher.watch(
         path.parent().unwrap_or_else(|| Path::new(".")),
         RecursiveMode::Recursive,
     )?;
@@ -178,7 +205,7 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::{collections::BTreeMap, time::Duration};
 
     use axum::{
         body::Body,
@@ -206,6 +233,7 @@ mod tests {
             config: Arc::new(RwLock::new(config)),
             lua: LuaRuntime::new(),
             widget_cache: Arc::new(RwLock::new(HashMap::new())),
+            discovery_cache: Arc::new(RwLock::new(HashMap::new())),
             widget_locks: Mutex::new(HashMap::new()),
         })
     }

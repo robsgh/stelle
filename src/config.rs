@@ -62,6 +62,14 @@ pub enum WidgetConfig {
         #[serde(default)]
         network_allow: Vec<String>,
     },
+    Traefik {
+        id: String,
+        api_url: String,
+        #[serde(default = "default_cache_ttl")]
+        cache_ttl: u64,
+        #[serde(default)]
+        exclude_hosts: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -69,6 +77,7 @@ pub enum WidgetConfig {
 pub enum LoadedWidget {
     Link(LinkWidget),
     Lua(LuaWidget),
+    Traefik(TraefikWidget),
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -103,6 +112,17 @@ pub struct LuaWidget {
     pub network_allow: Vec<Url>,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct TraefikWidget {
+    pub id: String,
+    #[serde(skip)]
+    pub api_url: Url,
+    #[serde(skip)]
+    pub cache_ttl: u64,
+    #[serde(skip)]
+    pub exclude_hosts: Vec<String>,
+}
+
 pub fn load(path: &Path) -> Result<LoadedConfig> {
     let raw = fs::read_to_string(path)
         .with_context(|| format!("could not read configuration {}", path.display()))?;
@@ -127,7 +147,7 @@ fn validate_and_load(config: DashboardConfig, base: &Path) -> Result<LoadedConfi
         accent,
         widgets,
     } = config;
-    let mut script_ids = std::collections::HashSet::new();
+    let mut dynamic_ids = std::collections::HashSet::new();
     let mut loaded = Vec::with_capacity(widgets.len());
 
     for widget in widgets {
@@ -155,8 +175,8 @@ fn validate_and_load(config: DashboardConfig, base: &Path) -> Result<LoadedConfi
                 if id.trim().is_empty() {
                     bail!("script widget id cannot be empty");
                 }
-                if !script_ids.insert(id.clone()) {
-                    bail!("duplicate script widget id: {id}");
+                if !dynamic_ids.insert(id.clone()) {
+                    bail!("duplicate dynamic widget id: {id}");
                 }
                 if !(MIN_CACHE_TTL..=MAX_CACHE_TTL).contains(&cache_ttl) {
                     bail!(
@@ -197,6 +217,39 @@ fn validate_and_load(config: DashboardConfig, base: &Path) -> Result<LoadedConfi
                     network_allow,
                 }));
             }
+            WidgetConfig::Traefik {
+                id,
+                api_url,
+                cache_ttl,
+                exclude_hosts,
+            } => {
+                if id.trim().is_empty() {
+                    bail!("Traefik widget id cannot be empty");
+                }
+                if !dynamic_ids.insert(id.clone()) {
+                    bail!("duplicate dynamic widget id: {id}");
+                }
+                if !(MIN_CACHE_TTL..=MAX_CACHE_TTL).contains(&cache_ttl) {
+                    bail!(
+                        "widget {id} cache_ttl must be between {MIN_CACHE_TTL} and {MAX_CACHE_TTL} seconds"
+                    );
+                }
+                let api_url = validate_origin(&api_url)
+                    .with_context(|| format!("invalid Traefik API origin for {id}"))?;
+                let exclude_hosts = exclude_hosts
+                    .into_iter()
+                    .map(|host| {
+                        validate_hostname(&host)
+                            .with_context(|| format!("invalid excluded host for {id}"))
+                    })
+                    .collect::<Result<_>>()?;
+                loaded.push(LoadedWidget::Traefik(TraefikWidget {
+                    id,
+                    api_url,
+                    cache_ttl,
+                    exclude_hosts,
+                }));
+            }
         }
     }
     Ok(Dashboard {
@@ -227,6 +280,20 @@ pub fn validate_origin(value: &str) -> Result<Url> {
         bail!("network allow entries must be origins such as https://api.example.com");
     }
     Ok(url)
+}
+
+fn validate_hostname(value: &str) -> Result<String> {
+    let value = value.trim().to_ascii_lowercase();
+    let url = Url::parse(&format!("https://{value}"))?;
+    if url.host_str() != Some(value.as_str())
+        || url.port().is_some()
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        bail!("expected a hostname such as app.example.com");
+    }
+    Ok(value)
 }
 
 #[cfg(test)]
@@ -299,6 +366,24 @@ mod tests {
     }
 
     #[test]
+    fn traefik_widget_serialization_hides_discovery_configuration() {
+        let widget = LoadedWidget::Traefik(TraefikWidget {
+            id: "services".into(),
+            api_url: Url::parse("https://traefik.example.com").unwrap(),
+            cache_ttl: 300,
+            exclude_hosts: vec!["private.example.com".into()],
+        });
+
+        let json = serde_json::to_value(widget).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({ "type": "traefik", "id": "services" })
+        );
+        assert!(!json.to_string().contains("traefik.example.com"));
+        assert!(!json.to_string().contains("private.example.com"));
+    }
+
+    #[test]
     fn rejects_cache_ttls_outside_limits() {
         let config: DashboardConfig = serde_yaml::from_str(
             r#"
@@ -351,7 +436,7 @@ mod tests {
             )
         );
         assert!(config.widgets.iter().any(
-            |widget| matches!(widget, LoadedWidget::Link(widget) if widget.label == "Docker Registry")
+            |widget| matches!(widget, LoadedWidget::Traefik(widget) if widget.id == "traefik-services")
         ));
     }
 }
