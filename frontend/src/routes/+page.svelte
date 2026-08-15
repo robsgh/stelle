@@ -167,8 +167,8 @@
       {/if}
 
       {#if dataWidgets.length > 0}
-        <section class="system-status" aria-labelledby="system-status-heading">
-          <h2 id="system-status-heading">System status</h2>
+        <section class="telemetry-section" aria-labelledby="telemetry-heading">
+          <h2 id="telemetry-heading">Telemetry</h2>
           <div class="smart-stack">
           {#each dataWidgets as widget}
           {@const state = widgetStates[widget.id] ?? { status: 'loading' }}

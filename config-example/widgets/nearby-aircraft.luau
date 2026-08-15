@@ -107,15 +107,18 @@ end
 local flight = trim(selected.flight)
 local hex = string.upper(selected.hex or "Unknown")
 local title = flight ~= "" and flight or hex
+local identity_label = flight ~= "" and "Callsign" or "ICAO address"
 local subtitle
 local proximity_label
 local proximity_value
 if selected_distance ~= nil then
-    subtitle = string.format("Closest of %d aircraft within %.0f nm", tracked, radius_nm)
+    subtitle = identity_label .. " · "
+        .. string.format("Closest of %d aircraft within %.0f nm", tracked, radius_nm)
     proximity_label = "Distance"
     proximity_value = string.format("%.1f nm", selected_distance)
 else
-    subtitle = "Strongest nearby signal · " .. tostring(tracked) .. " aircraft tracked"
+    subtitle = identity_label .. " · Strongest nearby signal · "
+        .. tostring(tracked) .. " aircraft tracked"
     proximity_label = "Signal"
     proximity_value = selected_signal > -1000 and string.format("%.1f dBFS", selected_signal) or "—"
 end

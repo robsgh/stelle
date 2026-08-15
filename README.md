@@ -126,7 +126,7 @@ widgets:
       max_age: 60
 ```
 
-The card shows one recent aircraft with its signal or distance, altitude, speed, heading, and vertical rate. It links directly to that aircraft in tar1090. By default, the widget selects the strongest recent aircraft with a position. Set `receiver_lat`, `receiver_lon`, and optionally `radius_nm` under `settings` to select the closest aircraft within a radius instead. Receiver coordinates stay in the server-side configuration and are not returned to the browser.
+The card shows one recent aircraft's transmitted callsign (or ICAO address when a callsign is unavailable), signal or distance, altitude, speed, heading, and vertical rate. It links directly to that aircraft in tar1090. By default, the widget selects the strongest recent aircraft with a position. Set `receiver_lat`, `receiver_lon`, and optionally `radius_nm` under `settings` to select the closest aircraft within a radius instead. Receiver coordinates stay in the server-side configuration and are not returned to the browser.
 
 ## Compose deployment
 
