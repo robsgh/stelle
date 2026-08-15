@@ -88,6 +88,8 @@ pub struct LinkConfig {
     pub description: String,
     pub url: String,
     #[serde(default)]
+    pub favicon_url: Option<String>,
+    #[serde(default)]
     pub accent: Option<String>,
 }
 
@@ -96,6 +98,8 @@ pub struct LinkWidget {
     pub label: String,
     pub description: String,
     pub url: String,
+    #[serde(skip)]
+    pub favicon_url: Option<Url>,
     pub accent: Option<String>,
 }
 
@@ -158,10 +162,26 @@ fn validate_and_load(config: DashboardConfig, base: &Path) -> Result<LoadedConfi
                 if widget.label.trim().is_empty() {
                     bail!("link label cannot be empty");
                 }
+                let favicon_url = widget
+                    .favicon_url
+                    .as_deref()
+                    .map(validate_http_url)
+                    .transpose()
+                    .with_context(|| format!("invalid favicon URL for {}", widget.label))?;
+                if favicon_url
+                    .as_ref()
+                    .is_some_and(|url| !url.username().is_empty() || url.password().is_some())
+                {
+                    bail!(
+                        "favicon URL for {} cannot contain credentials",
+                        widget.label
+                    );
+                }
                 loaded.push(LoadedWidget::Link(LinkWidget {
                     label: widget.label,
                     description: widget.description,
                     url: widget.url,
+                    favicon_url,
                     accent: widget.accent,
                 }));
             }
@@ -408,6 +428,49 @@ mod tests {
                 url: https://example.com
         "#;
         assert!(serde_yaml::from_str::<DashboardConfig>(config).is_err());
+    }
+
+    #[test]
+    fn link_favicon_overrides_are_validated_and_server_only() {
+        let config: DashboardConfig = serde_yaml::from_str(
+            r#"
+                widgets:
+                  - type: link
+                    label: Example
+                    url: https://example.com
+                    favicon_url: https://static.example.net/icon.png
+            "#,
+        )
+        .unwrap();
+        let loaded = validate_and_load(config, Path::new(".")).unwrap();
+        let LoadedWidget::Link(link) = &loaded.widgets[0] else {
+            panic!("expected link widget");
+        };
+        assert_eq!(
+            link.favicon_url.as_ref().unwrap().as_str(),
+            "https://static.example.net/icon.png"
+        );
+        assert!(
+            serde_json::to_value(&loaded.widgets[0])
+                .unwrap()
+                .get("favicon_url")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn rejects_favicon_overrides_with_credentials() {
+        let config: DashboardConfig = serde_yaml::from_str(
+            r#"
+                widgets:
+                  - type: link
+                    label: Example
+                    url: https://example.com
+                    favicon_url: https://user:secret@static.example.net/icon.png
+            "#,
+        )
+        .unwrap();
+        assert!(validate_and_load(config, Path::new(".")).is_err());
     }
 
     #[test]

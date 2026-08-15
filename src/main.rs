@@ -1,5 +1,6 @@
 mod api;
 mod config;
+mod favicon;
 mod lua;
 mod traefik;
 
@@ -52,12 +53,15 @@ type DiscoveryCache = Arc<RwLock<HashMap<String, CachedDiscovery>>>;
 const NO_CACHE: &str = "no-cache";
 const NO_STORE: &str = "no-store";
 const IMMUTABLE_CACHE: &str = "public, max-age=31536000, immutable";
+const FAVICON_CACHE: &str = "public, max-age=21600, stale-if-error=86400";
+const FAVICON_MISS_CACHE: &str = "public, max-age=900";
 
 pub struct AppState {
     config: Arc<RwLock<LoadedConfig>>,
     lua: LuaRuntime,
     widget_cache: WidgetCache,
     discovery_cache: DiscoveryCache,
+    favicons: Arc<favicon::Service>,
     widget_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
@@ -84,17 +88,20 @@ async fn main() -> Result<()> {
     let config = Arc::new(RwLock::new(config::load(&config_path)?));
     let widget_cache = Arc::new(RwLock::new(HashMap::new()));
     let discovery_cache = Arc::new(RwLock::new(HashMap::new()));
+    let favicons = Arc::new(favicon::Service::new()?);
     let _config_watcher = watch_config(
         &config_path,
         Arc::clone(&config),
         Arc::clone(&widget_cache),
         Arc::clone(&discovery_cache),
+        Arc::clone(&favicons),
     )?;
     let state = Arc::new(AppState {
         config,
         lua: LuaRuntime::new(),
         widget_cache,
         discovery_cache,
+        favicons,
         widget_locks: Mutex::new(HashMap::new()),
     });
     let app = build_app(state, &static_dir);
@@ -112,6 +119,7 @@ fn build_app(state: Arc<AppState>, static_dir: &Path) -> Router {
     let static_files = ServeDir::new(static_dir).not_found_service(ServeFile::new(index));
     Router::new()
         .route("/api/dashboard", get(api::dashboard))
+        .route("/api/favicon", get(api::favicon))
         .route("/api/widgets/{id}", get(api::widget))
         .route("/api/widgets/{id}/refresh", post(api::refresh_widget))
         .route("/healthz", get(api::health))
@@ -132,7 +140,11 @@ async fn cache_control(request: Request, next: Next) -> Response {
 }
 
 fn cache_policy(path: &str, status: StatusCode) -> &'static str {
-    if path.starts_with("/api/") || path == "/healthz" {
+    if path == "/api/favicon" && status.is_success() {
+        FAVICON_CACHE
+    } else if path == "/api/favicon" {
+        FAVICON_MISS_CACHE
+    } else if path.starts_with("/api/") || path == "/healthz" {
         NO_STORE
     } else if status.is_success() && path.starts_with("/_app/immutable/") {
         IMMUTABLE_CACHE
@@ -146,6 +158,7 @@ fn watch_config(
     config: Arc<RwLock<LoadedConfig>>,
     widget_cache: WidgetCache,
     discovery_cache: DiscoveryCache,
+    favicons: Arc<favicon::Service>,
 ) -> Result<RecommendedWatcher> {
     let config_path = path.to_owned();
     let mut watcher = recommended_watcher(
@@ -167,6 +180,7 @@ fn watch_config(
                             .write()
                             .expect("discovery cache lock poisoned")
                             .clear();
+                        favicons.clear();
                         tracing::info!(config = %config_path.display(), "configuration reloaded");
                     }
                     Err(error) => {
@@ -217,7 +231,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        config::{Dashboard, LoadedWidget, LuaWidget, Theme},
+        config::{Dashboard, LinkWidget, LoadedWidget, LuaWidget, Theme},
         lua::Metric,
     };
 
@@ -234,6 +248,7 @@ mod tests {
             lua: LuaRuntime::new(),
             widget_cache: Arc::new(RwLock::new(HashMap::new())),
             discovery_cache: Arc::new(RwLock::new(HashMap::new())),
+            favicons: Arc::new(favicon::Service::new().unwrap()),
             widget_locks: Mutex::new(HashMap::new()),
         })
     }
@@ -301,6 +316,91 @@ mod tests {
             cache_policy("/_app/immutable/assets/app.abc123.css", StatusCode::OK),
             IMMUTABLE_CACHE
         );
+    }
+
+    #[test]
+    fn cache_policy_caches_favicon_hits_and_misses() {
+        assert_eq!(cache_policy("/api/favicon", StatusCode::OK), FAVICON_CACHE);
+        assert_eq!(
+            cache_policy("/api/favicon", StatusCode::NOT_FOUND),
+            FAVICON_MISS_CACHE
+        );
+    }
+
+    #[tokio::test]
+    async fn favicon_endpoint_rejects_unconfigured_origins() {
+        let response = test_app(vec![])
+            .oneshot(
+                Request::get("/api/favicon?url=https%3A%2F%2Fexample.com")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response.headers()[header::CACHE_CONTROL],
+            FAVICON_MISS_CACHE
+        );
+    }
+
+    #[tokio::test]
+    async fn favicon_endpoint_sniffs_and_caches_configured_icons() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let upstream_hits = Arc::clone(&hits);
+        let upstream = Router::new().route(
+            "/favicon.ico",
+            get(move || {
+                let upstream_hits = Arc::clone(&upstream_hits);
+                async move {
+                    upstream_hits.fetch_add(1, Ordering::Relaxed);
+                    (
+                        [(header::CONTENT_TYPE, "text/html")],
+                        b"\x89PNG\r\n\x1a\nmock".to_vec(),
+                    )
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+        let page_url = format!("http://{address}/app");
+        let query = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("url", &page_url)
+            .finish();
+        let app = test_app(vec![LoadedWidget::Link(LinkWidget {
+            label: "Upstream".into(),
+            description: String::new(),
+            url: page_url,
+            favicon_url: None,
+            accent: None,
+        })]);
+
+        for _ in 0..2 {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::get(format!("/api/favicon?{query}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.headers()[header::CONTENT_TYPE], "image/png");
+            assert_eq!(
+                response.headers()[header::X_CONTENT_TYPE_OPTIONS],
+                "nosniff"
+            );
+            assert_eq!(response.headers()[header::CACHE_CONTROL], FAVICON_CACHE);
+        }
+        assert_eq!(hits.load(Ordering::Relaxed), 1);
+        server.abort();
     }
 
     #[tokio::test]

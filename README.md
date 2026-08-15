@@ -44,10 +44,12 @@ widgets:
     label: Router
     description: Network administration
     url: https://192.168.1.1:8443
+    # Optional when the icon is hosted elsewhere:
+    favicon_url: https://cdn.example.com/router-icon.png
     accent: "#38bdf8"
 ```
 
-Link URLs must use HTTP or HTTPS. The browser requests `/favicon.ico` from each link host.
+Link and optional `favicon_url` values must use HTTP or HTTPS. Stelle fetches each favicon server-side, verifies that it is an image, and serves it from the same origin as the dashboard. It first tries `/favicon.ico`, then a same-origin `<link rel="icon">` advertised by the page. Use `favicon_url` for sites whose icon lives on another origin. Successful icons are cached for six hours and missing icons for 15 minutes; there is no background polling. Automatic favicon requests are restricted to configured and discovered link origins, while overrides must be explicitly trusted in the server-side configuration.
 
 ### Traefik discovery
 
@@ -185,6 +187,7 @@ git tag -a v0.1.0 -m "Stelle v0.1.0"
 ## HTTP API
 
 - `GET /api/dashboard`: Public dashboard configuration.
+- `GET /api/favicon?url=…`: Returns a validated, cached favicon for a dashboard link.
 - `GET /api/widgets/{id}`: Returns a cached widget result, refreshing it on demand after expiry.
 - `POST /api/widgets/{id}/refresh`: Refreshes one Luau widget.
 - `GET /healthz`: Health status.

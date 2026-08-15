@@ -84,6 +84,7 @@ fn links_from_routers(
                 label: label.clone(),
                 description: String::new(),
                 url: url.to_string(),
+                favicon_url: None,
                 accent: None,
             });
         }

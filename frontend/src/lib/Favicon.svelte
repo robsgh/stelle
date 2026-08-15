@@ -6,7 +6,7 @@
 {#if !failed}
   <span class="icon-wrap">
     <img
-      src={new URL('/favicon.ico', url).href}
+      src={`/api/favicon?url=${encodeURIComponent(url)}`}
       alt=""
       width={size}
       height={size}

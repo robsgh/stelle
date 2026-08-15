@@ -2,18 +2,99 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use axum::{
     Json,
-    extract::{Path, State},
-    http::StatusCode,
+    body::Body,
+    extract::{Path, Query, State},
+    http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
+use serde::Deserialize;
 use serde_json::json;
 
 use crate::{
     AppState, CachedDiscovery, CachedWidget,
-    config::{LinkWidget, LoadedWidget, LuaWidget, TraefikWidget},
+    config::{LinkWidget, LoadedWidget, LuaWidget, TraefikWidget, validate_http_url},
+    favicon,
     lua::{StatsContent, TIME_LIMIT},
     traefik,
 };
+
+#[derive(Deserialize)]
+pub struct FaviconQuery {
+    url: String,
+}
+
+struct FaviconSource {
+    override_url: Option<url::Url>,
+}
+
+pub async fn favicon(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<FaviconQuery>,
+) -> Response {
+    let Ok(page_url) = validate_http_url(&query.url) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if !page_url.username().is_empty() || page_url.password().is_some() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let Some(source) = favicon_source_for_link(&state, &page_url) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some(icon) = state
+        .favicons
+        .get(&page_url, source.override_url.as_ref())
+        .await
+    else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    let mut response = Response::new(Body::from(icon.bytes));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static(icon.content_type),
+    );
+    response.headers_mut().insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    response
+}
+
+fn favicon_source_for_link(state: &AppState, page_url: &url::Url) -> Option<FaviconSource> {
+    let configured = state
+        .config
+        .read()
+        .expect("configuration lock poisoned")
+        .widgets
+        .iter()
+        .find_map(|widget| match widget {
+            LoadedWidget::Link(link) if link_origin_matches(link, page_url) => {
+                Some(FaviconSource {
+                    override_url: link.favicon_url.clone(),
+                })
+            }
+            _ => None,
+        });
+    if configured.is_some() {
+        return configured;
+    }
+
+    state
+        .discovery_cache
+        .read()
+        .expect("discovery cache lock poisoned")
+        .values()
+        .flat_map(|cached| &cached.links)
+        .find_map(|link| {
+            link_origin_matches(link, page_url).then(|| FaviconSource {
+                override_url: link.favicon_url.clone(),
+            })
+        })
+}
+
+fn link_origin_matches(link: &LinkWidget, page_url: &url::Url) -> bool {
+    validate_http_url(&link.url).is_ok_and(|configured| favicon::same_origin(&configured, page_url))
+}
 
 pub async fn dashboard(State(state): State<Arc<AppState>>) -> Response {
     let mut dashboard = state
@@ -322,6 +403,7 @@ mod tests {
             label: label.into(),
             description: String::new(),
             url: url.into(),
+            favicon_url: None,
             accent: None,
         }
     }
