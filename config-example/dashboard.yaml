@@ -2,6 +2,7 @@ widgets:
   - type: lua
     id: stelle-github
     script: widgets/github-stats.luau
+    cache_ttl: 300
     network_allow:
       - https://api.github.com
 

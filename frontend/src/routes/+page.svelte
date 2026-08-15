@@ -18,30 +18,46 @@
     return () => window.clearInterval(clock);
   });
 
-  onMount(async () => {
-    try {
-      const response = await fetch('/api/dashboard');
-      if (!response.ok) throw new Error('Dashboard configuration is unavailable');
-      const loaded: Dashboard = await response.json();
-      dashboard = loaded;
-      document.documentElement.dataset.theme = loaded.theme;
-      document.documentElement.style.setProperty('--accent', loaded.accent);
-      for (const widget of loaded.widgets) {
-        if (widget.type === 'lua') refresh(widget);
+  onMount(() => {
+    let cancelled = false;
+
+    async function loadDashboard() {
+      try {
+        const response = await fetch('/api/dashboard');
+        if (!response.ok) throw new Error('Dashboard configuration is unavailable');
+        const loaded: Dashboard = await response.json();
+        if (cancelled) return;
+        dashboard = loaded;
+        document.documentElement.dataset.theme = loaded.theme;
+        document.documentElement.style.setProperty('--accent', loaded.accent);
+        for (const widget of loaded.widgets) {
+          if (widget.type !== 'lua') continue;
+          refresh(widget, false, true);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          dashboardError = error instanceof Error ? error.message : 'Could not load the dashboard';
+        }
       }
-    } catch (error) {
-      dashboardError = error instanceof Error ? error.message : 'Could not load the dashboard';
     }
+
+    loadDashboard();
+    return () => { cancelled = true; };
   });
 
-  async function refresh(widget: LuaWidget) {
-    widgetStates = { ...widgetStates, [widget.id]: { status: 'loading' } };
+  async function refresh(widget: LuaWidget, force = false, showLoading = false) {
+    const previous = widgetStates[widget.id];
+    if (showLoading || !previous) {
+      widgetStates = { ...widgetStates, [widget.id]: { status: 'loading' } };
+    }
     try {
-      const response = await fetch(`/api/widgets/${encodeURIComponent(widget.id)}/refresh`, { method: 'POST' });
+      const endpoint = `/api/widgets/${encodeURIComponent(widget.id)}${force ? '/refresh' : ''}`;
+      const response = await fetch(endpoint, { method: force ? 'POST' : 'GET' });
       const body = await response.json();
       if (!response.ok) throw new Error(body?.error?.message ?? 'The widget could not be refreshed');
       widgetStates = { ...widgetStates, [widget.id]: { status: 'ready', content: body.content } };
     } catch (error) {
+      if (!force && previous?.status === 'ready') return;
       widgetStates = {
         ...widgetStates,
         [widget.id]: { status: 'error', message: error instanceof Error ? error.message : 'Refresh failed' }
@@ -136,7 +152,7 @@
                 <span class="error-badge"><CircleAlert size={18} /></span>
                 <div><strong>Widget unavailable</strong><p>{state.message}</p></div>
               </div>
-              <button class="refresh-button" onclick={() => refresh(widget)}><RefreshCw size={17} /> Retry</button>
+              <button class="refresh-button" onclick={() => refresh(widget, true, true)}><RefreshCw size={17} /> Retry</button>
             {:else}
               <div class="card-top">
                 <div>
@@ -148,7 +164,7 @@
                 <div class="refresh-control">
                   <button
                     class="icon-button"
-                    onclick={() => refresh(widget)}
+                    onclick={() => refresh(widget, true, true)}
                     aria-label={`Refresh ${state.content.title}. Updated at ${displayTime(state.content.fetched_at)}`}
                   >
                     <RefreshCw size={18} />

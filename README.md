@@ -58,11 +58,16 @@ widgets:
   - type: lua
     id: repository
     script: widgets/github-stats.luau
+    cache_ttl: 300
     network_allow:
       - https://api.github.com
     settings:
       repository: robsgh/stelle
 ```
+
+`cache_ttl` is the number of seconds a successful result remains cached after the first request. It defaults to 300 seconds and must be between 10 seconds and 24 hours. Page loads use the server cache, while the refresh button forces a new execution. Stelle does not poll widgets in the background.
+
+After a cached result expires, the next page request refreshes it. If that attempt fails, Stelle returns the last successful value. Changing the dashboard configuration or a Luau script invalidates the cache.
 
 The script can use:
 
@@ -145,6 +150,7 @@ git tag -a v0.1.0 -m "Stelle v0.1.0"
 ## HTTP API
 
 - `GET /api/dashboard`: Public dashboard configuration.
+- `GET /api/widgets/{id}`: Returns a cached widget result, refreshing it on demand after expiry.
 - `POST /api/widgets/{id}/refresh`: Refreshes one Luau widget.
 - `GET /healthz`: Health status.
 

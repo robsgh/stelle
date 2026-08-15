@@ -339,6 +339,7 @@ mod tests {
     async fn cpu_bound_widgets_do_not_block_the_async_runtime() {
         let widget = LuaWidget {
             id: "busy".into(),
+            cache_ttl: 300,
             source: r#"
                 local started = os.clock()
                 while os.clock() - started < 0.05 do end
@@ -368,6 +369,7 @@ mod tests {
     async fn executes_a_sandboxed_stats_widget() {
         let widget = LuaWidget {
             id: "test".into(),
+            cache_ttl: 300,
             source: r#"
                 assert(io == nil)
                 assert(package == nil)

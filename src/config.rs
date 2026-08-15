@@ -10,6 +10,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
 
+const DEFAULT_CACHE_TTL: u64 = 300;
+const MIN_CACHE_TTL: u64 = 10;
+const MAX_CACHE_TTL: u64 = 86_400;
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Dashboard<W> {
@@ -40,6 +44,10 @@ fn default_accent() -> String {
     "#8b5cf6".into()
 }
 
+fn default_cache_ttl() -> u64 {
+    DEFAULT_CACHE_TTL
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
 pub enum WidgetConfig {
@@ -47,6 +55,8 @@ pub enum WidgetConfig {
     Lua {
         id: String,
         script: String,
+        #[serde(default = "default_cache_ttl")]
+        cache_ttl: u64,
         #[serde(default)]
         settings: BTreeMap<String, Value>,
         #[serde(default)]
@@ -80,9 +90,11 @@ pub struct LinkWidget {
     pub accent: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct LuaWidget {
     pub id: String,
+    #[serde(skip)]
+    pub cache_ttl: u64,
     #[serde(skip)]
     pub source: String,
     #[serde(skip)]
@@ -136,6 +148,7 @@ fn validate_and_load(config: DashboardConfig, base: &Path) -> Result<LoadedConfi
             WidgetConfig::Lua {
                 id,
                 script,
+                cache_ttl,
                 settings,
                 network_allow,
             } => {
@@ -144,6 +157,11 @@ fn validate_and_load(config: DashboardConfig, base: &Path) -> Result<LoadedConfi
                 }
                 if !script_ids.insert(id.clone()) {
                     bail!("duplicate script widget id: {id}");
+                }
+                if !(MIN_CACHE_TTL..=MAX_CACHE_TTL).contains(&cache_ttl) {
+                    bail!(
+                        "widget {id} cache_ttl must be between {MIN_CACHE_TTL} and {MAX_CACHE_TTL} seconds"
+                    );
                 }
                 if Path::new(&script).is_absolute()
                     || Path::new(&script)
@@ -173,6 +191,7 @@ fn validate_and_load(config: DashboardConfig, base: &Path) -> Result<LoadedConfi
                     .with_context(|| format!("could not compile script for widget {id}"))?;
                 loaded.push(LoadedWidget::Lua(LuaWidget {
                     id,
+                    cache_ttl,
                     source,
                     settings,
                     network_allow,
@@ -260,6 +279,38 @@ mod tests {
         assert_eq!(json["widgets"][0]["type"], "link");
         assert!(json["widgets"][0].get("id").is_none());
         assert!(json["widgets"][0].get("columns").is_none());
+    }
+
+    #[test]
+    fn lua_cache_ttl_defaults_to_five_minutes() {
+        let config: DashboardConfig = serde_yaml::from_str(
+            r#"
+                widgets:
+                  - type: lua
+                    id: example
+                    script: widget.luau
+            "#,
+        )
+        .unwrap();
+        let WidgetConfig::Lua { cache_ttl, .. } = &config.widgets[0] else {
+            panic!("expected Lua widget");
+        };
+        assert_eq!(*cache_ttl, 300);
+    }
+
+    #[test]
+    fn rejects_cache_ttls_outside_limits() {
+        let config: DashboardConfig = serde_yaml::from_str(
+            r#"
+                widgets:
+                  - type: lua
+                    id: example
+                    script: widgets/github-stats.luau
+                    cache_ttl: 9
+            "#,
+        )
+        .unwrap();
+        assert!(validate_and_load(config, Path::new("config-example")).is_err());
     }
 
     #[test]

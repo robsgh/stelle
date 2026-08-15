@@ -3,11 +3,12 @@ mod config;
 mod lua;
 
 use std::{
+    collections::HashMap,
     env,
     net::{Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
-    sync::{Arc, RwLock},
-    time::Duration,
+    sync::{Arc, Mutex, RwLock},
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result};
@@ -26,11 +27,21 @@ use tower_http::{
 use tracing_subscriber::EnvFilter;
 
 use config::LoadedConfig;
-use lua::LuaRuntime;
+use lua::{LuaRuntime, StatsContent};
+
+struct CachedWidget {
+    widget: config::LuaWidget,
+    content: StatsContent,
+    refreshed_at: Instant,
+}
+
+type WidgetCache = Arc<RwLock<HashMap<String, CachedWidget>>>;
 
 pub struct AppState {
     config: Arc<RwLock<LoadedConfig>>,
     lua: LuaRuntime,
+    widget_cache: WidgetCache,
+    widget_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 #[tokio::main]
@@ -54,10 +65,14 @@ async fn main() -> Result<()> {
     let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
 
     let config = Arc::new(RwLock::new(config::load(&config_path)?));
-    let _config_watcher = watch_config(&config_path, Arc::clone(&config))?;
+    let widget_cache = Arc::new(RwLock::new(HashMap::new()));
+    let _config_watcher =
+        watch_config(&config_path, Arc::clone(&config), Arc::clone(&widget_cache))?;
     let state = Arc::new(AppState {
         config,
         lua: LuaRuntime::new(),
+        widget_cache,
+        widget_locks: Mutex::new(HashMap::new()),
     });
     let app = build_app(state, &static_dir);
 
@@ -74,6 +89,7 @@ fn build_app(state: Arc<AppState>, static_dir: &Path) -> Router {
     let static_files = ServeDir::new(static_dir).not_found_service(ServeFile::new(index));
     Router::new()
         .route("/api/dashboard", get(api::dashboard))
+        .route("/api/widgets/{id}", get(api::widget))
         .route("/api/widgets/{id}/refresh", post(api::refresh_widget))
         .route("/healthz", get(api::health))
         .fallback_service(static_files)
@@ -84,6 +100,7 @@ fn build_app(state: Arc<AppState>, static_dir: &Path) -> Router {
 fn watch_config(
     path: &Path,
     config: Arc<RwLock<LoadedConfig>>,
+    widget_cache: WidgetCache,
 ) -> Result<Debouncer<RecommendedWatcher>> {
     let config_path = path.to_owned();
     let mut watcher = new_debouncer(
@@ -92,6 +109,10 @@ fn watch_config(
             Ok(_) => match config::load(&config_path) {
                 Ok(updated) => {
                     *config.write().expect("configuration lock poisoned") = updated;
+                    widget_cache
+                        .write()
+                        .expect("widget cache lock poisoned")
+                        .clear();
                     tracing::info!(config = %config_path.display(), "configuration reloaded");
                 }
                 Err(error) => {
@@ -139,9 +160,12 @@ mod tests {
     use tower::ServiceExt;
 
     use super::*;
-    use crate::config::{Dashboard, LoadedWidget, LuaWidget, Theme};
+    use crate::{
+        config::{Dashboard, LoadedWidget, LuaWidget, Theme},
+        lua::Metric,
+    };
 
-    fn test_app(widgets: Vec<LoadedWidget>) -> Router {
+    fn test_state(widgets: Vec<LoadedWidget>) -> Arc<AppState> {
         let config = Dashboard {
             title: Some("Test".into()),
             subtitle: None,
@@ -149,11 +173,16 @@ mod tests {
             accent: "#8b5cf6".into(),
             widgets,
         };
-        let state = Arc::new(AppState {
+        Arc::new(AppState {
             config: Arc::new(RwLock::new(config)),
             lua: LuaRuntime::new(),
-        });
-        build_app(state, Path::new("frontend/build"))
+            widget_cache: Arc::new(RwLock::new(HashMap::new())),
+            widget_locks: Mutex::new(HashMap::new()),
+        })
+    }
+
+    fn test_app(widgets: Vec<LoadedWidget>) -> Router {
+        build_app(test_state(widgets), Path::new("frontend/build"))
     }
 
     async fn json_body(response: axum::response::Response) -> Value {
@@ -179,6 +208,7 @@ mod tests {
     async fn dashboard_endpoint_omits_private_widget_data() {
         let widget = LoadedWidget::Lua(LuaWidget {
             id: "private".into(),
+            cache_ttl: 300,
             source: "return {}".into(),
             settings: BTreeMap::from([("token".into(), Value::from("secret"))]),
             network_allow: vec![url::Url::parse("https://example.com").unwrap()],
@@ -202,6 +232,7 @@ mod tests {
     async fn widget_failures_return_the_public_api_error() {
         let widget = LoadedWidget::Lua(LuaWidget {
             id: "failing".into(),
+            cache_ttl: 300,
             source: "error('private failure detail')".into(),
             settings: BTreeMap::new(),
             network_allow: vec![],
@@ -225,5 +256,89 @@ mod tests {
                 }
             })
         );
+    }
+
+    #[tokio::test]
+    async fn widget_get_reuses_a_fresh_cached_result() {
+        let widget = LoadedWidget::Lua(LuaWidget {
+            id: "cached".into(),
+            cache_ttl: 300,
+            source: r#"
+                return {
+                    title = "Cached",
+                    metrics = {{ label = "Count", value = 1 }},
+                    fetched_at = "2026-01-01T00:00:00Z"
+                }
+            "#
+            .into(),
+            settings: BTreeMap::new(),
+            network_allow: vec![],
+        });
+        let app = test_app(vec![widget]);
+
+        let first = app
+            .clone()
+            .oneshot(
+                Request::get("/api/widgets/cached")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let second = app
+            .oneshot(
+                Request::get("/api/widgets/cached")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(first.status(), StatusCode::OK);
+        assert_eq!(second.status(), StatusCode::OK);
+        assert_eq!(json_body(first).await["cache"]["cached"], false);
+        assert_eq!(json_body(second).await["cache"]["cached"], true);
+    }
+
+    #[tokio::test]
+    async fn expired_cache_falls_back_to_last_success_after_failure() {
+        let widget = LuaWidget {
+            id: "stale".into(),
+            cache_ttl: 10,
+            source: "error('temporary failure')".into(),
+            settings: BTreeMap::new(),
+            network_allow: vec![],
+        };
+        let state = test_state(vec![LoadedWidget::Lua(widget.clone())]);
+        state.widget_cache.write().unwrap().insert(
+            widget.id.clone(),
+            CachedWidget {
+                widget,
+                content: StatsContent {
+                    title: "Last success".into(),
+                    subtitle: String::new(),
+                    href: None,
+                    metrics: vec![Metric {
+                        label: "Count".into(),
+                        value: Value::from(1),
+                    }],
+                    fetched_at: "2026-01-01T00:00:00Z".into(),
+                },
+                refreshed_at: Instant::now() - Duration::from_secs(11),
+            },
+        );
+        let response = build_app(state, Path::new("frontend/build"))
+            .oneshot(
+                Request::get("/api/widgets/stale")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        assert_eq!(body["content"]["title"], "Last success");
+        assert_eq!(body["cache"]["stale"], true);
     }
 }
