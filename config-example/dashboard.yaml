@@ -12,11 +12,17 @@ widgets:
     url: https://www.youtube.com
     accent: "#ff0033"
 
-  - type: link
-    label: Proxmox
-    description: Manage your virtualization host
-    url: https://proxmox.example.com:8006
-    accent: "#e57000"
+  - type: lua
+    id: proxmox
+    script: widgets/proxmox.luau
+    cache_ttl: 180
+    network_allow:
+      - https://proxmox.example.com:8006
+    settings:
+      title: Proxmox
+      base_url: https://proxmox.example.com:8006
+      token_id: "stelle@pve!dashboard"
+      token_secret: REPLACE_WITH_PROXMOX_API_TOKEN_SECRET
 
   - type: link
     label: Docker Registry

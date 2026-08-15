@@ -345,9 +345,11 @@ mod tests {
         assert!(config.widgets.iter().any(
             |widget| matches!(widget, LoadedWidget::Link(widget) if widget.label == "YouTube")
         ));
-        assert!(config.widgets.iter().any(
-            |widget| matches!(widget, LoadedWidget::Link(widget) if widget.label == "Proxmox")
-        ));
+        assert!(
+            config.widgets.iter().any(
+                |widget| matches!(widget, LoadedWidget::Lua(widget) if widget.id == "proxmox")
+            )
+        );
         assert!(config.widgets.iter().any(
             |widget| matches!(widget, LoadedWidget::Link(widget) if widget.label == "Docker Registry")
         ));
