@@ -25,8 +25,10 @@ local resources = payload.data or {}
 
 local nodes = 0
 local online_nodes = 0
-local guests = 0
-local running_guests = 0
+local vms = 0
+local running_vms = 0
+local containers = 0
+local running_containers = 0
 local cpu_used = 0
 local cpu_total = 0
 local memory_used = 0
@@ -47,10 +49,15 @@ for _, resource in ipairs(resources) do
             memory_used = memory_used + (tonumber(resource.mem) or 0)
             memory_total = memory_total + (tonumber(resource.maxmem) or 0)
         end
-    elseif kind == "qemu" or kind == "lxc" then
-        guests = guests + 1
+    elseif kind == "qemu" then
+        vms = vms + 1
         if resource.status == "running" then
-            running_guests = running_guests + 1
+            running_vms = running_vms + 1
+        end
+    elseif kind == "lxc" then
+        containers = containers + 1
+        if resource.status == "running" then
+            running_containers = running_containers + 1
         end
     elseif kind == "storage" and resource.status == "available" then
         storage_used = storage_used + (tonumber(resource.disk) or 0)
@@ -79,12 +86,11 @@ return {
     subtitle = subtitle,
     href = base_url,
     metrics = {
-        { label = "Nodes", value = tostring(online_nodes) .. "/" .. tostring(nodes) },
-        { label = "Guests", value = tostring(running_guests) .. "/" .. tostring(guests) },
-        { label = "Stopped", value = guests - running_guests },
-        { label = "CPU", value = percentage(cpu_used, cpu_total) },
-        { label = "Memory", value = percentage(memory_used, memory_total) },
-        { label = "Storage", value = percentage(storage_used, storage_total) }
+        { label = "VMs", value = tostring(running_vms) .. "/" .. tostring(vms) },
+        { label = "Containers", value = tostring(running_containers) .. "/" .. tostring(containers) },
+        { label = "CPU util", value = percentage(cpu_used, cpu_total) },
+        { label = "Mem util", value = percentage(memory_used, memory_total) },
+        { label = "Disk util", value = percentage(storage_used, storage_total) }
     },
     fetched_at = os.date("!%Y-%m-%dT%H:%M:%SZ")
 }
