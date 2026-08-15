@@ -107,6 +107,12 @@
   function smartWidgets(dashboard: Dashboard): LuaWidget[] {
     return dashboard.widgets.filter((widget): widget is LuaWidget => widget.type === 'lua');
   }
+
+  function metricParts(value: string | number | boolean | null): { value: string; unit: string } {
+    const text = value === null ? '—' : String(value);
+    const match = text.match(/^([+-]?\d+(?:\.\d+)?)\s*(%|°|[A-Za-z]+)$/);
+    return match ? { value: match[1], unit: match[2] } : { value: text, unit: '' };
+  }
 </script>
 
 <svelte:head><title>{dashboard?.title ?? defaultTitle(now)}</title></svelte:head>
@@ -133,12 +139,15 @@
   {:else}
     {@const linkWidgets = links(dashboard)}
     {@const dataWidgets = smartWidgets(dashboard)}
-    <div class="dashboard-content">
+    <div
+      class="dashboard-content"
+      style={`--dashboard-max-width:${gridMaxWidth(linkWidgets.length || dataWidgets.length)}px`}
+    >
       {#if linkWidgets.length > 0}
         <section
           class="widget-grid"
           aria-label="Links"
-          style={`--grid-columns:${gridColumns(linkWidgets.length)};--grid-max-width:${gridMaxWidth(linkWidgets.length)}px`}
+          style={`--grid-columns:${gridColumns(linkWidgets.length)}`}
         >
           {#each linkWidgets as widget}
           <a
@@ -158,14 +167,15 @@
       {/if}
 
       {#if dataWidgets.length > 0}
-        <section class="smart-stack" aria-label="Live data widgets">
+        <section class="system-status" aria-labelledby="system-status-heading">
+          <h2 id="system-status-heading">System status</h2>
+          <div class="smart-stack">
           {#each dataWidgets as widget}
           {@const state = widgetStates[widget.id] ?? { status: 'loading' }}
           <article class="card stats-card smart-card">
             {#if state.status === 'loading'}
               <div class="card-top">
                 <div>
-                  <span class="data-label"><span></span>Live data</span>
                   <span class="skeleton title-skeleton"></span><span class="skeleton text-skeleton"></span>
                 </div>
                 <LoaderCircle class="spinner" size={21} aria-label="Refreshing" />
@@ -180,13 +190,13 @@
             {:else}
               <div class="card-top">
                 <div>
-                  <span class="data-label"><span></span>Live data</span>
                   {#if state.content.href}
                     <a class="widget-title" href={state.content.href}>{state.content.title}</a>
                   {:else}<h2 class="widget-title">{state.content.title}</h2>{/if}
                   <p class="widget-subtitle">{state.content.subtitle}</p>
                 </div>
                 <div class="refresh-control">
+                  <span class="updated-at">Updated {displayTime(state.content.fetched_at)}</span>
                   <button
                     class="icon-button"
                     onclick={() => refresh(widget, true, true)}
@@ -194,17 +204,21 @@
                   >
                     <RefreshCw size={18} />
                   </button>
-                  <span class="refresh-tooltip" role="tooltip">Updated at {displayTime(state.content.fetched_at)}</span>
                 </div>
               </div>
               <div class={`metrics metrics-${state.content.metrics.length}`}>
                 {#each state.content.metrics as metric}
-                  <div><strong>{metric.value ?? '—'}</strong><span>{metric.label}</span></div>
+                  {@const parts = metricParts(metric.value)}
+                  <div>
+                    <strong>{parts.value}{#if parts.unit}<small>{parts.unit}</small>{/if}</strong>
+                    <span>{metric.label}</span>
+                  </div>
                 {/each}
               </div>
             {/if}
           </article>
           {/each}
+          </div>
         </section>
       {/if}
     </div>
