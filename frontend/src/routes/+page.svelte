@@ -89,8 +89,12 @@
     return date ? currentTime(date) : '';
   }
 
+  function gridColumns(cardCount: number): number {
+    return Math.max(1, Math.ceil(Math.sqrt(cardCount)));
+  }
+
   function gridMaxWidth(cardCount: number): number {
-    const columns = Math.max(1, Math.ceil(Math.sqrt(cardCount)));
+    const columns = gridColumns(cardCount);
     const cardWidth = 350;
     const gap = 18;
     return columns * cardWidth + (columns - 1) * gap;
@@ -122,7 +126,7 @@
     <section
       class="widget-grid"
       aria-label="Dashboard widgets"
-      style={`--grid-max-width:${gridMaxWidth(dashboard.widgets.length)}px`}
+      style={`--grid-columns:${gridColumns(dashboard.widgets.length)};--grid-max-width:${gridMaxWidth(dashboard.widgets.length)}px`}
     >
       {#each dashboard.widgets as widget}
         {#if widget.type === 'link'}
