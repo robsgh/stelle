@@ -25,9 +25,7 @@ pub async fn dashboard(State(state): State<Arc<AppState>>) -> Response {
         .widgets
         .iter()
         .filter_map(|widget| match widget {
-            LoadedWidget::Link(link) => url::Url::parse(&link.url)
-                .ok()
-                .and_then(|url| url.host_str().map(str::to_ascii_lowercase)),
+            LoadedWidget::Link(link) => link_host(link),
             _ => None,
         })
         .collect::<HashSet<_>>();
@@ -37,15 +35,7 @@ pub async fn dashboard(State(state): State<Arc<AppState>>) -> Response {
         match widget {
             LoadedWidget::Traefik(discovery) => {
                 for link in discovered_links(&state, &discovery).await {
-                    let Some(host) = url::Url::parse(&link.url)
-                        .ok()
-                        .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
-                    else {
-                        continue;
-                    };
-                    if hosts.insert(host) {
-                        widgets.push(LoadedWidget::Link(link));
-                    }
+                    push_unique_link(&mut hosts, &mut widgets, link);
                 }
             }
             widget => widgets.push(widget),
@@ -53,6 +43,22 @@ pub async fn dashboard(State(state): State<Arc<AppState>>) -> Response {
     }
     dashboard.widgets = widgets;
     Json(dashboard).into_response()
+}
+
+fn link_host(link: &LinkWidget) -> Option<String> {
+    url::Url::parse(&link.url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
+}
+
+fn push_unique_link(
+    hosts: &mut HashSet<String>,
+    widgets: &mut Vec<LoadedWidget>,
+    link: LinkWidget,
+) {
+    if link_host(&link).is_some_and(|host| hosts.insert(host)) {
+        widgets.push(LoadedWidget::Link(link));
+    }
 }
 
 struct DiscoveryHit {
@@ -304,5 +310,42 @@ impl IntoResponse for ApiError {
             Json(json!({ "error": { "code": self.1, "message": self.2 } })),
         )
             .into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn link(label: &str, url: &str) -> LinkWidget {
+        LinkWidget {
+            label: label.into(),
+            description: String::new(),
+            url: url.into(),
+            accent: None,
+        }
+    }
+
+    #[test]
+    fn discovered_links_do_not_duplicate_hardcoded_hosts() {
+        let mut hosts = HashSet::from(["registry.example.com".into()]);
+        let mut widgets = Vec::new();
+
+        push_unique_link(
+            &mut hosts,
+            &mut widgets,
+            link("Discovered Registry", "https://registry.example.com/other"),
+        );
+        push_unique_link(
+            &mut hosts,
+            &mut widgets,
+            link("New Service", "https://new.example.com/"),
+        );
+
+        assert_eq!(widgets.len(), 1);
+        assert!(matches!(
+            &widgets[0],
+            LoadedWidget::Link(link) if link.label == "New Service"
+        ));
     }
 }

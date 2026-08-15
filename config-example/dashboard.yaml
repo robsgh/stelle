@@ -24,6 +24,12 @@ widgets:
       token_id: "stelle@pve!dashboard"
       token_secret: REPLACE_WITH_PROXMOX_API_TOKEN_SECRET
 
+  - type: link
+    label: Docker Registry
+    description: Browse your container images
+    url: https://registry.example.com/
+    accent: "#6d7fab"
+
   - type: traefik
     id: traefik-services
     api_url: https://traefik.example.com

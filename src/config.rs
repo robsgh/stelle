@@ -423,7 +423,7 @@ mod tests {
     #[test]
     fn bundled_configuration_loads() {
         let config = load(Path::new("config-example/dashboard.yaml")).unwrap();
-        assert_eq!(config.widgets.len(), 4);
+        assert_eq!(config.widgets.len(), 5);
         assert!(config.widgets.iter().any(
             |widget| matches!(widget, LoadedWidget::Lua(widget) if widget.id == "stelle-github")
         ));
@@ -437,6 +437,9 @@ mod tests {
         );
         assert!(config.widgets.iter().any(
             |widget| matches!(widget, LoadedWidget::Traefik(widget) if widget.id == "traefik-services")
+        ));
+        assert!(config.widgets.iter().any(
+            |widget| matches!(widget, LoadedWidget::Link(widget) if widget.label == "Docker Registry")
         ));
     }
 }
