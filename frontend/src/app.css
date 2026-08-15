@@ -274,6 +274,13 @@ a.widget-title:hover { color: var(--accent); }
   padding-top: 18px;
 }
 
+.metrics-5 {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.metrics-5 > div:nth-child(-n + 2) { grid-column: span 3; }
+.metrics-5 > div:nth-child(n + 3) { grid-column: span 2; }
+
 .metrics > div {
   display: flex;
   flex-direction: column;

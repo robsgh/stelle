@@ -88,9 +88,9 @@ return {
     metrics = {
         { label = "VMs", value = tostring(running_vms) .. "/" .. tostring(vms) },
         { label = "Containers", value = tostring(running_containers) .. "/" .. tostring(containers) },
-        { label = "CPU util", value = percentage(cpu_used, cpu_total) },
-        { label = "Mem util", value = percentage(memory_used, memory_total) },
-        { label = "Disk util", value = percentage(storage_used, storage_total) }
+        { label = "CPU", value = percentage(cpu_used, cpu_total) },
+        { label = "Memory", value = percentage(memory_used, memory_total) },
+        { label = "Disk", value = percentage(storage_used, storage_total) }
     },
     fetched_at = os.date("!%Y-%m-%dT%H:%M:%SZ")
 }

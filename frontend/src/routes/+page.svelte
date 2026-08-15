@@ -172,7 +172,7 @@
                   <span class="refresh-tooltip" role="tooltip">Updated at {displayTime(state.content.fetched_at)}</span>
                 </div>
               </div>
-              <div class="metrics">
+              <div class={`metrics metrics-${state.content.metrics.length}`}>
                 {#each state.content.metrics as metric}
                   <div><strong>{metric.value ?? '—'}</strong><span>{metric.label}</span></div>
                 {/each}
