@@ -1,16 +1,16 @@
 mod api;
+mod cache;
 mod config;
 mod favicon;
 mod lua;
+mod network;
 mod traefik;
 
 use std::{
-    collections::HashMap,
     env,
     net::{Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, RwLock},
-    time::Instant,
+    sync::{Arc, RwLock},
 };
 
 use anyhow::{Context, Result};
@@ -22,7 +22,7 @@ use axum::{
     response::Response,
     routing::{get, post},
 };
-use notify_debouncer_mini::notify::{
+use notify::{
     Error as NotifyError, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
     recommended_watcher,
 };
@@ -32,37 +32,34 @@ use tower_http::{
 };
 use tracing_subscriber::EnvFilter;
 
-use config::{LinkWidget, LoadedConfig, TraefikWidget};
+use cache::{KeyedLocks, TimedCache};
+use config::{LinkWidget, LoadedConfig, LuaWidget, TraefikWidget};
 use lua::{LuaRuntime, StatsContent};
-
-struct CachedWidget {
-    widget: config::LuaWidget,
-    content: StatsContent,
-    refreshed_at: Instant,
-}
-
-struct CachedDiscovery {
-    widget: TraefikWidget,
-    links: Vec<LinkWidget>,
-    refreshed_at: Instant,
-}
-
-type WidgetCache = Arc<RwLock<HashMap<String, CachedWidget>>>;
-type DiscoveryCache = Arc<RwLock<HashMap<String, CachedDiscovery>>>;
 
 const NO_CACHE: &str = "no-cache";
 const NO_STORE: &str = "no-store";
 const IMMUTABLE_CACHE: &str = "public, max-age=31536000, immutable";
-const FAVICON_CACHE: &str = "public, max-age=21600, stale-if-error=86400";
-const FAVICON_MISS_CACHE: &str = "public, max-age=900";
 
 pub struct AppState {
-    config: Arc<RwLock<LoadedConfig>>,
+    config: RwLock<LoadedConfig>,
     lua: LuaRuntime,
-    widget_cache: WidgetCache,
-    discovery_cache: DiscoveryCache,
-    favicons: Arc<favicon::Service>,
-    widget_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    widget_cache: TimedCache<LuaWidget, StatsContent>,
+    discovery_cache: TimedCache<TraefikWidget, Vec<LinkWidget>>,
+    favicons: favicon::Service,
+    refresh_locks: KeyedLocks,
+}
+
+impl AppState {
+    fn new(config: LoadedConfig) -> Result<Self> {
+        Ok(Self {
+            config: RwLock::new(config),
+            lua: LuaRuntime::new(),
+            widget_cache: TimedCache::default(),
+            discovery_cache: TimedCache::default(),
+            favicons: favicon::Service::new()?,
+            refresh_locks: KeyedLocks::default(),
+        })
+    }
 }
 
 #[tokio::main]
@@ -85,25 +82,8 @@ async fn main() -> Result<()> {
         .context("invalid STELLE_PORT")?;
     let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
 
-    let config = Arc::new(RwLock::new(config::load(&config_path)?));
-    let widget_cache = Arc::new(RwLock::new(HashMap::new()));
-    let discovery_cache = Arc::new(RwLock::new(HashMap::new()));
-    let favicons = Arc::new(favicon::Service::new()?);
-    let _config_watcher = watch_config(
-        &config_path,
-        Arc::clone(&config),
-        Arc::clone(&widget_cache),
-        Arc::clone(&discovery_cache),
-        Arc::clone(&favicons),
-    )?;
-    let state = Arc::new(AppState {
-        config,
-        lua: LuaRuntime::new(),
-        widget_cache,
-        discovery_cache,
-        favicons,
-        widget_locks: Mutex::new(HashMap::new()),
-    });
+    let state = Arc::new(AppState::new(config::load(&config_path)?)?);
+    let _config_watcher = watch_config(&config_path, Arc::clone(&state))?;
     let app = build_app(state, &static_dir);
 
     tracing::info!(%address, config = %config_path.display(), "stelle is ready");
@@ -117,11 +97,14 @@ async fn main() -> Result<()> {
 fn build_app(state: Arc<AppState>, static_dir: &Path) -> Router {
     let index = static_dir.join("index.html");
     let static_files = ServeDir::new(static_dir).not_found_service(ServeFile::new(index));
+    let api = Router::new()
+        .route("/dashboard", get(api::dashboard))
+        .route("/favicon", get(api::favicon))
+        .route("/widgets/{id}", get(api::widget))
+        .route("/widgets/{id}/refresh", post(api::refresh_widget))
+        .fallback(api::not_found);
     Router::new()
-        .route("/api/dashboard", get(api::dashboard))
-        .route("/api/favicon", get(api::favicon))
-        .route("/api/widgets/{id}", get(api::widget))
-        .route("/api/widgets/{id}/refresh", post(api::refresh_widget))
+        .nest("/api", api)
         .route("/healthz", get(api::health))
         .fallback_service(static_files)
         .layer(middleware::from_fn(cache_control))
@@ -141,10 +124,10 @@ async fn cache_control(request: Request, next: Next) -> Response {
 
 fn cache_policy(path: &str, status: StatusCode) -> &'static str {
     if path == "/api/favicon" && status.is_success() {
-        FAVICON_CACHE
+        favicon::FOUND_CACHE_CONTROL
     } else if path == "/api/favicon" {
-        FAVICON_MISS_CACHE
-    } else if path.starts_with("/api/") || path == "/healthz" {
+        favicon::MISSING_CACHE_CONTROL
+    } else if path == "/api" || path.starts_with("/api/") || path == "/healthz" {
         NO_STORE
     } else if status.is_success() && path.starts_with("/_app/immutable/") {
         IMMUTABLE_CACHE
@@ -153,13 +136,7 @@ fn cache_policy(path: &str, status: StatusCode) -> &'static str {
     }
 }
 
-fn watch_config(
-    path: &Path,
-    config: Arc<RwLock<LoadedConfig>>,
-    widget_cache: WidgetCache,
-    discovery_cache: DiscoveryCache,
-    favicons: Arc<favicon::Service>,
-) -> Result<RecommendedWatcher> {
+fn watch_config(path: &Path, state: Arc<AppState>) -> Result<RecommendedWatcher> {
     let config_path = path.to_owned();
     let mut watcher = recommended_watcher(
         move |event: std::result::Result<Event, NotifyError>| match event {
@@ -171,16 +148,12 @@ fn watch_config(
             {
                 match config::load(&config_path) {
                     Ok(updated) => {
-                        *config.write().expect("configuration lock poisoned") = updated;
-                        widget_cache
-                            .write()
-                            .expect("widget cache lock poisoned")
-                            .clear();
-                        discovery_cache
-                            .write()
-                            .expect("discovery cache lock poisoned")
-                            .clear();
-                        favicons.clear();
+                        let mut current =
+                            state.config.write().expect("configuration lock poisoned");
+                        state.widget_cache.clear();
+                        state.discovery_cache.clear();
+                        state.favicons.clear();
+                        *current = updated;
                         tracing::info!(config = %config_path.display(), "configuration reloaded");
                     }
                     Err(error) => {
@@ -203,7 +176,7 @@ async fn shutdown_signal() {
     let ctrl_c = async {
         tokio::signal::ctrl_c()
             .await
-            .expect("failed to install Ctrl+C handler")
+            .expect("failed to install Ctrl+C handler");
     };
     #[cfg(unix)]
     let terminate = async {
@@ -219,7 +192,7 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, time::Duration};
+    use std::collections::BTreeMap;
 
     use axum::{
         body::Body,
@@ -243,14 +216,7 @@ mod tests {
             accent: "#8b5cf6".into(),
             widgets,
         };
-        Arc::new(AppState {
-            config: Arc::new(RwLock::new(config)),
-            lua: LuaRuntime::new(),
-            widget_cache: Arc::new(RwLock::new(HashMap::new())),
-            discovery_cache: Arc::new(RwLock::new(HashMap::new())),
-            favicons: Arc::new(favicon::Service::new().unwrap()),
-            widget_locks: Mutex::new(HashMap::new()),
-        })
+        Arc::new(AppState::new(config).unwrap())
     }
 
     fn test_app(widgets: Vec<LoadedWidget>) -> Router {
@@ -311,6 +277,11 @@ mod tests {
     }
 
     #[test]
+    fn cache_policy_never_stores_the_api_root() {
+        assert_eq!(cache_policy("/api", StatusCode::NOT_FOUND), NO_STORE);
+    }
+
+    #[test]
     fn cache_policy_keeps_successful_fingerprinted_assets_immutable() {
         assert_eq!(
             cache_policy("/_app/immutable/assets/app.abc123.css", StatusCode::OK),
@@ -320,10 +291,13 @@ mod tests {
 
     #[test]
     fn cache_policy_caches_favicon_hits_and_misses() {
-        assert_eq!(cache_policy("/api/favicon", StatusCode::OK), FAVICON_CACHE);
+        assert_eq!(
+            cache_policy("/api/favicon", StatusCode::OK),
+            favicon::FOUND_CACHE_CONTROL
+        );
         assert_eq!(
             cache_policy("/api/favicon", StatusCode::NOT_FOUND),
-            FAVICON_MISS_CACHE
+            favicon::MISSING_CACHE_CONTROL
         );
     }
 
@@ -341,7 +315,27 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         assert_eq!(
             response.headers()[header::CACHE_CONTROL],
-            FAVICON_MISS_CACHE
+            favicon::MISSING_CACHE_CONTROL
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_api_routes_return_json_not_the_spa() {
+        let response = test_app(vec![])
+            .oneshot(Request::get("/api/not-found").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], NO_STORE);
+        assert_eq!(
+            json_body(response).await,
+            serde_json::json!({
+                "error": {
+                    "code": "endpoint_not_found",
+                    "message": "API endpoint was not found"
+                }
+            })
         );
     }
 
@@ -376,7 +370,7 @@ mod tests {
         let app = test_app(vec![LoadedWidget::Link(LinkWidget {
             label: "Upstream".into(),
             description: String::new(),
-            url: page_url,
+            url: url::Url::parse(&page_url).unwrap(),
             favicon_url: None,
             accent: None,
         })]);
@@ -397,7 +391,10 @@ mod tests {
                 response.headers()[header::X_CONTENT_TYPE_OPTIONS],
                 "nosniff"
             );
-            assert_eq!(response.headers()[header::CACHE_CONTROL], FAVICON_CACHE);
+            assert_eq!(
+                response.headers()[header::CACHE_CONTROL],
+                favicon::FOUND_CACHE_CONTROL
+            );
         }
         assert_eq!(hits.load(Ordering::Relaxed), 1);
         server.abort();
@@ -479,27 +476,24 @@ mod tests {
     async fn expired_cache_falls_back_to_last_success_after_failure() {
         let widget = LuaWidget {
             id: "stale".into(),
-            cache_ttl: 10,
+            cache_ttl: 0,
             source: "error('temporary failure')".into(),
             settings: BTreeMap::new(),
             network_allow: vec![],
         };
         let state = test_state(vec![LoadedWidget::Lua(widget.clone())]);
-        state.widget_cache.write().unwrap().insert(
+        state.widget_cache.insert(
             widget.id.clone(),
-            CachedWidget {
-                widget,
-                content: StatsContent {
-                    title: "Last success".into(),
-                    subtitle: String::new(),
-                    href: None,
-                    metrics: vec![Metric {
-                        label: "Count".into(),
-                        value: Value::from(1),
-                    }],
-                    fetched_at: "2026-01-01T00:00:00Z".into(),
-                },
-                refreshed_at: Instant::now() - Duration::from_secs(11),
+            widget,
+            StatsContent {
+                title: "Last success".into(),
+                subtitle: String::new(),
+                href: None,
+                metrics: vec![Metric {
+                    label: "Count".into(),
+                    value: Value::from(1),
+                }],
+                fetched_at: "2026-01-01T00:00:00Z".into(),
             },
         );
         let response = build_app(state, Path::new("frontend/build"))

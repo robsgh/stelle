@@ -304,9 +304,8 @@ a.widget-title:hover { color: var(--accent); }
   padding-top: 0;
 }
 
-.stats-card .metrics-5 > div { grid-column: auto; }
-
 .stats-card .metrics-5 > div {
+  grid-column: auto;
   padding-inline: 12px;
 }
 

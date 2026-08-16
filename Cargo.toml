@@ -9,7 +9,7 @@ description = "A self-hostable, scriptable homelab dashboard"
 anyhow = "1.0"
 axum = "0.8"
 mlua = { version = "0.12", features = ["luau", "vendored", "send", "serialize"] }
-notify-debouncer-mini = "0.7"
+notify = "8.2"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls-webpki-roots"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -18,7 +18,7 @@ tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "signal", "t
 tower-http = { version = "0.6", features = ["fs", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-url = "2.5"
+url = { version = "2.5", features = ["serde"] }
 
 [dev-dependencies]
 http-body-util = "0.1"

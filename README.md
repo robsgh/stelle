@@ -109,6 +109,8 @@ return {
 }
 ```
 
+Each metric needs a non-empty label and a scalar JSON value: a string, number, boolean, or JSON null.
+
 Each refresh uses a new sandbox with memory, execution-time, response-size, and network limits. Widgets cannot access the file system, processes, environment variables, persistent storage, or raw sockets.
 
 #### Nearby aircraft

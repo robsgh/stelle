@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -97,7 +97,7 @@ pub struct LinkConfig {
 pub struct LinkWidget {
     pub label: String,
     pub description: String,
-    pub url: String,
+    pub url: Url,
     #[serde(skip)]
     pub favicon_url: Option<Url>,
     pub accent: Option<String>,
@@ -151,13 +151,13 @@ fn validate_and_load(config: DashboardConfig, base: &Path) -> Result<LoadedConfi
         accent,
         widgets,
     } = config;
-    let mut dynamic_ids = std::collections::HashSet::new();
+    let mut dynamic_ids = HashSet::new();
     let mut loaded = Vec::with_capacity(widgets.len());
 
     for widget in widgets {
         match widget {
             WidgetConfig::Link(widget) => {
-                validate_http_url(&widget.url)
+                let url = validate_http_url(&widget.url)
                     .with_context(|| format!("invalid link URL for {}", widget.label))?;
                 if widget.label.trim().is_empty() {
                     bail!("link label cannot be empty");
@@ -180,7 +180,7 @@ fn validate_and_load(config: DashboardConfig, base: &Path) -> Result<LoadedConfi
                 loaded.push(LoadedWidget::Link(LinkWidget {
                     label: widget.label,
                     description: widget.description,
-                    url: widget.url,
+                    url,
                     favicon_url,
                     accent: widget.accent,
                 }));
@@ -192,17 +192,7 @@ fn validate_and_load(config: DashboardConfig, base: &Path) -> Result<LoadedConfi
                 settings,
                 network_allow,
             } => {
-                if id.trim().is_empty() {
-                    bail!("script widget id cannot be empty");
-                }
-                if !dynamic_ids.insert(id.clone()) {
-                    bail!("duplicate dynamic widget id: {id}");
-                }
-                if !(MIN_CACHE_TTL..=MAX_CACHE_TTL).contains(&cache_ttl) {
-                    bail!(
-                        "widget {id} cache_ttl must be between {MIN_CACHE_TTL} and {MAX_CACHE_TTL} seconds"
-                    );
-                }
+                validate_dynamic_widget(&id, cache_ttl, &mut dynamic_ids)?;
                 if Path::new(&script).is_absolute()
                     || Path::new(&script)
                         .components()
@@ -243,17 +233,7 @@ fn validate_and_load(config: DashboardConfig, base: &Path) -> Result<LoadedConfi
                 cache_ttl,
                 exclude_hosts,
             } => {
-                if id.trim().is_empty() {
-                    bail!("Traefik widget id cannot be empty");
-                }
-                if !dynamic_ids.insert(id.clone()) {
-                    bail!("duplicate dynamic widget id: {id}");
-                }
-                if !(MIN_CACHE_TTL..=MAX_CACHE_TTL).contains(&cache_ttl) {
-                    bail!(
-                        "widget {id} cache_ttl must be between {MIN_CACHE_TTL} and {MAX_CACHE_TTL} seconds"
-                    );
-                }
+                validate_dynamic_widget(&id, cache_ttl, &mut dynamic_ids)?;
                 let api_url = validate_origin(&api_url)
                     .with_context(|| format!("invalid Traefik API origin for {id}"))?;
                 let exclude_hosts = exclude_hosts
@@ -279,6 +259,19 @@ fn validate_and_load(config: DashboardConfig, base: &Path) -> Result<LoadedConfi
         accent,
         widgets: loaded,
     })
+}
+
+fn validate_dynamic_widget(id: &str, cache_ttl: u64, ids: &mut HashSet<String>) -> Result<()> {
+    if id.trim().is_empty() {
+        bail!("dynamic widget id cannot be empty");
+    }
+    if !ids.insert(id.to_owned()) {
+        bail!("duplicate dynamic widget id: {id}");
+    }
+    if !(MIN_CACHE_TTL..=MAX_CACHE_TTL).contains(&cache_ttl) {
+        bail!("widget {id} cache_ttl must be between {MIN_CACHE_TTL} and {MAX_CACHE_TTL} seconds");
+    }
+    Ok(())
 }
 
 pub fn validate_http_url(value: &str) -> Result<Url> {
@@ -364,6 +357,7 @@ mod tests {
         assert!(json.get("title").is_none());
         assert!(json.get("subtitle").is_none());
         assert_eq!(json["widgets"][0]["type"], "link");
+        assert_eq!(json["widgets"][0]["url"], "https://example.com/");
         assert!(json["widgets"][0].get("id").is_none());
         assert!(json["widgets"][0].get("columns").is_none());
     }

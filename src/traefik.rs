@@ -5,7 +5,10 @@ use reqwest::Client;
 use serde::Deserialize;
 use url::Url;
 
-use crate::config::{LinkWidget, TraefikWidget};
+use crate::{
+    config::{LinkWidget, TraefikWidget},
+    network,
+};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -27,7 +30,7 @@ pub async fn discover(widget: &TraefikWidget) -> Result<Vec<LinkWidget>> {
     let endpoint = widget.api_url.join("api/http/routers")?;
     let routers = Client::builder()
         .timeout(REQUEST_TIMEOUT)
-        .user_agent(concat!("stelle/", env!("CARGO_PKG_VERSION")))
+        .user_agent(network::USER_AGENT)
         .build()?
         .get(endpoint)
         .send()
@@ -83,7 +86,7 @@ fn links_from_routers(
             links.push(LinkWidget {
                 label: label.clone(),
                 description: String::new(),
-                url: url.to_string(),
+                url,
                 favicon_url: None,
                 accent: None,
             });
@@ -173,9 +176,9 @@ mod tests {
         .unwrap();
 
         assert_eq!(links[0].label, "Registry UI");
-        assert_eq!(links[0].url, "http://registry.example.com/");
+        assert_eq!(links[0].url.as_str(), "http://registry.example.com/");
         assert_eq!(links[1].label, "RSVP Dashboard");
-        assert_eq!(links[1].url, "https://rsvps.example.com/");
+        assert_eq!(links[1].url.as_str(), "https://rsvps.example.com/");
     }
 
     #[test]
@@ -195,7 +198,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(links.len(), 1);
-        assert_eq!(links[0].url, "https://other.example.com/");
+        assert_eq!(links[0].url.as_str(), "https://other.example.com/");
     }
 
     #[test]

@@ -11,11 +11,10 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::{
-    AppState, CachedDiscovery, CachedWidget,
+    AppState,
     config::{LinkWidget, LoadedWidget, LuaWidget, TraefikWidget, validate_http_url},
-    favicon,
     lua::{StatsContent, TIME_LIMIT},
-    traefik,
+    network, traefik,
 };
 
 #[derive(Deserialize)]
@@ -61,39 +60,42 @@ pub async fn favicon(
 }
 
 fn favicon_source_for_link(state: &AppState, page_url: &url::Url) -> Option<FaviconSource> {
-    let configured = state
-        .config
-        .read()
-        .expect("configuration lock poisoned")
-        .widgets
-        .iter()
-        .find_map(|widget| match widget {
-            LoadedWidget::Link(link) if link_origin_matches(link, page_url) => {
-                Some(FaviconSource {
-                    override_url: link.favicon_url.clone(),
-                })
-            }
-            _ => None,
-        });
+    let configured = {
+        let config = state.config.read().expect("configuration lock poisoned");
+        favicon_source(
+            config.widgets.iter().filter_map(|widget| match widget {
+                LoadedWidget::Link(link) => Some(link),
+                _ => None,
+            }),
+            page_url,
+        )
+    };
     if configured.is_some() {
         return configured;
     }
 
     state
         .discovery_cache
-        .read()
-        .expect("discovery cache lock poisoned")
-        .values()
-        .flat_map(|cached| &cached.links)
-        .find_map(|link| {
-            link_origin_matches(link, page_url).then(|| FaviconSource {
-                override_url: link.favicon_url.clone(),
-            })
-        })
+        .find_map(|links| favicon_source(links, page_url))
 }
 
-fn link_origin_matches(link: &LinkWidget, page_url: &url::Url) -> bool {
-    validate_http_url(&link.url).is_ok_and(|configured| favicon::same_origin(&configured, page_url))
+fn favicon_source<'a>(
+    links: impl IntoIterator<Item = &'a LinkWidget>,
+    page_url: &url::Url,
+) -> Option<FaviconSource> {
+    let mut origin_match = None;
+    for link in links {
+        let source = || FaviconSource {
+            override_url: link.favicon_url.clone(),
+        };
+        if link.url == *page_url {
+            return Some(source());
+        }
+        if origin_match.is_none() && network::same_origin(&link.url, page_url) {
+            origin_match = Some(source());
+        }
+    }
+    origin_match
 }
 
 pub async fn dashboard(State(state): State<Arc<AppState>>) -> Response {
@@ -127,9 +129,7 @@ pub async fn dashboard(State(state): State<Arc<AppState>>) -> Response {
 }
 
 fn link_host(link: &LinkWidget) -> Option<String> {
-    url::Url::parse(&link.url)
-        .ok()
-        .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
+    link.url.host_str().map(str::to_ascii_lowercase)
 }
 
 fn push_unique_link(
@@ -142,24 +142,19 @@ fn push_unique_link(
     }
 }
 
-struct DiscoveryHit {
-    links: Vec<LinkWidget>,
-    fresh: bool,
-}
-
 async fn discovered_links(state: &AppState, widget: &TraefikWidget) -> Vec<LinkWidget> {
     if let Some(cached) = cached_discovery(state, widget)
         && cached.fresh
     {
-        return cached.links;
+        return cached.value;
     }
 
-    let lock = widget_lock(state, &widget.id);
+    let lock = state.refresh_locks.get(&widget.id);
     let _guard = lock.lock().await;
     if let Some(cached) = cached_discovery(state, widget)
         && cached.fresh
     {
-        return cached.links;
+        return cached.value;
     }
 
     let stale = cached_discovery(state, widget);
@@ -168,55 +163,38 @@ async fn discovered_links(state: &AppState, widget: &TraefikWidget) -> Vec<LinkW
             store_discovery(state, widget, links.clone());
             links
         }
-        Err(error) if stale.is_some() => {
-            tracing::warn!(widget = %widget.id, %error, "Traefik discovery failed; using stale links");
-            stale.expect("stale discovery disappeared").links
-        }
         Err(error) => {
-            tracing::warn!(widget = %widget.id, %error, "Traefik discovery failed");
-            Vec::new()
+            if let Some(stale) = stale {
+                tracing::warn!(widget = %widget.id, %error, "Traefik discovery failed; using stale links");
+                stale.value
+            } else {
+                tracing::warn!(widget = %widget.id, %error, "Traefik discovery failed");
+                Vec::new()
+            }
         }
     }
 }
 
-fn cached_discovery(state: &AppState, widget: &TraefikWidget) -> Option<DiscoveryHit> {
-    let cache = state
+fn cached_discovery(
+    state: &AppState,
+    widget: &TraefikWidget,
+) -> Option<crate::cache::Hit<Vec<LinkWidget>>> {
+    state
         .discovery_cache
-        .read()
-        .expect("discovery cache lock poisoned");
-    let cached = cache.get(&widget.id)?;
-    if cached.widget != *widget {
-        return None;
-    }
-    Some(DiscoveryHit {
-        links: cached.links.clone(),
-        fresh: cached.refreshed_at.elapsed() < Duration::from_secs(widget.cache_ttl),
-    })
+        .get(&widget.id, widget, Duration::from_secs(widget.cache_ttl))
 }
 
 fn store_discovery(state: &AppState, widget: &TraefikWidget, links: Vec<LinkWidget>) {
-    let still_current = state
-        .config
-        .read()
-        .expect("configuration lock poisoned")
+    let config = state.config.read().expect("configuration lock poisoned");
+    let still_current = config
         .widgets
         .iter()
         .any(|candidate| matches!(candidate, LoadedWidget::Traefik(current) if current == widget));
-    if !still_current {
-        return;
+    if still_current {
+        state
+            .discovery_cache
+            .insert(widget.id.clone(), widget.clone(), links);
     }
-    state
-        .discovery_cache
-        .write()
-        .expect("discovery cache lock poisoned")
-        .insert(
-            widget.id.clone(),
-            CachedDiscovery {
-                widget: widget.clone(),
-                links,
-                refreshed_at: std::time::Instant::now(),
-            },
-        );
 }
 
 pub async fn widget(
@@ -227,15 +205,15 @@ pub async fn widget(
     if let Some(cached) = cached_widget(&state, &widget)
         && cached.fresh
     {
-        return Ok(widget_response(&id, cached.content, true, false));
+        return Ok(widget_response(&id, cached.value, true, false));
     }
 
-    let lock = widget_lock(&state, &id);
+    let lock = state.refresh_locks.get(&id);
     let _guard = lock.lock().await;
     if let Some(cached) = cached_widget(&state, &widget)
         && cached.fresh
     {
-        return Ok(widget_response(&id, cached.content, true, false));
+        return Ok(widget_response(&id, cached.value, true, false));
     }
 
     let stale = cached_widget(&state, &widget);
@@ -244,13 +222,10 @@ pub async fn widget(
             store_widget(&state, &widget, content.clone());
             Ok(widget_response(&id, content, false, false))
         }
-        Err(_) if stale.is_some() => Ok(widget_response(
-            &id,
-            stale.expect("stale cache entry disappeared").content,
-            true,
-            true,
-        )),
-        Err(error) => Err(error),
+        Err(error) => match stale {
+            Some(stale) => Ok(widget_response(&id, stale.value, true, true)),
+            None => Err(error),
+        },
     }
 }
 
@@ -259,7 +234,7 @@ pub async fn refresh_widget(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let widget = find_widget(&state, &id)?;
-    let lock = widget_lock(&state, &id);
+    let lock = state.refresh_locks.get(&id);
     let _guard = lock.lock().await;
     let content = execute_widget(&state, &id, &widget).await?;
     store_widget(&state, &widget, content.clone());
@@ -309,59 +284,23 @@ async fn execute_widget(
         })
 }
 
-struct CacheHit {
-    content: StatsContent,
-    fresh: bool,
-}
-
-fn cached_widget(state: &AppState, widget: &LuaWidget) -> Option<CacheHit> {
-    let cache = state
+fn cached_widget(state: &AppState, widget: &LuaWidget) -> Option<crate::cache::Hit<StatsContent>> {
+    state
         .widget_cache
-        .read()
-        .expect("widget cache lock poisoned");
-    let cached = cache.get(&widget.id)?;
-    if cached.widget != *widget {
-        return None;
-    }
-    Some(CacheHit {
-        content: cached.content.clone(),
-        fresh: cached.refreshed_at.elapsed() < Duration::from_secs(widget.cache_ttl),
-    })
+        .get(&widget.id, widget, Duration::from_secs(widget.cache_ttl))
 }
 
 fn store_widget(state: &AppState, widget: &LuaWidget, content: StatsContent) {
-    let still_current = state
-        .config
-        .read()
-        .expect("configuration lock poisoned")
+    let config = state.config.read().expect("configuration lock poisoned");
+    let still_current = config
         .widgets
         .iter()
         .any(|candidate| matches!(candidate, LoadedWidget::Lua(current) if current == widget));
-    if !still_current {
-        return;
+    if still_current {
+        state
+            .widget_cache
+            .insert(widget.id.clone(), widget.clone(), content);
     }
-    state
-        .widget_cache
-        .write()
-        .expect("widget cache lock poisoned")
-        .insert(
-            widget.id.clone(),
-            CachedWidget {
-                widget: widget.clone(),
-                content,
-                refreshed_at: std::time::Instant::now(),
-            },
-        );
-}
-
-fn widget_lock(state: &AppState, id: &str) -> Arc<tokio::sync::Mutex<()>> {
-    state
-        .widget_locks
-        .lock()
-        .expect("widget lock map poisoned")
-        .entry(id.to_owned())
-        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-        .clone()
 }
 
 fn widget_response(
@@ -380,6 +319,14 @@ fn widget_response(
 
 pub async fn health() -> Json<serde_json::Value> {
     Json(json!({ "status": "ok" }))
+}
+
+pub async fn not_found() -> ApiError {
+    ApiError(
+        StatusCode::NOT_FOUND,
+        "endpoint_not_found",
+        "API endpoint was not found",
+    )
 }
 
 pub struct ApiError(StatusCode, &'static str, &'static str);
@@ -402,7 +349,7 @@ mod tests {
         LinkWidget {
             label: label.into(),
             description: String::new(),
-            url: url.into(),
+            url: url::Url::parse(url).unwrap(),
             favicon_url: None,
             accent: None,
         }
@@ -429,5 +376,26 @@ mod tests {
             &widgets[0],
             LoadedWidget::Link(link) if link.label == "New Service"
         ));
+    }
+
+    #[test]
+    fn exact_link_selects_its_own_favicon_override() {
+        let links = [
+            LinkWidget {
+                favicon_url: Some(url::Url::parse("https://cdn.example.com/one.png").unwrap()),
+                ..link("One", "https://example.com/one")
+            },
+            LinkWidget {
+                favicon_url: Some(url::Url::parse("https://cdn.example.com/two.png").unwrap()),
+                ..link("Two", "https://example.com/two")
+            },
+        ];
+
+        let source = favicon_source(&links, &url::Url::parse("https://example.com/two").unwrap())
+            .expect("configured favicon source");
+        assert_eq!(
+            source.override_url.as_ref().map(url::Url::as_str),
+            Some("https://cdn.example.com/two.png")
+        );
     }
 }

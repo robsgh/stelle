@@ -26,7 +26,7 @@ export interface Dashboard {
 export interface StatsContent {
   title: string;
   subtitle: string;
-  href?: string;
+  href: string | null;
   metrics: Array<{ label: string; value: string | number | boolean | null }>;
   fetched_at: string;
 }

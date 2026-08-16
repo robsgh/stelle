@@ -10,7 +10,6 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use mlua::{Lua, LuaSerdeExt, Table, Value, VmState};
 use reqwest::{
-    StatusCode,
     blocking::Client,
     header::{ACCEPT, ACCEPT_LANGUAGE, HeaderMap, HeaderName, HeaderValue},
     redirect::Policy,
@@ -19,7 +18,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use url::Url;
 
-use crate::config::{LuaWidget, validate_http_url};
+use crate::{
+    config::{LuaWidget, validate_http_url},
+    network,
+};
 
 const MAX_BODY_BYTES: usize = 1024 * 1024;
 const MAX_REDIRECTS: usize = 5;
@@ -79,7 +81,7 @@ impl LuaRuntime {
         let client = Client::builder()
             .redirect(Policy::none())
             .timeout(TIME_LIMIT)
-            .user_agent(concat!("stelle/", env!("CARGO_PKG_VERSION")))
+            .user_agent(network::USER_AGENT)
             .build()?;
         let lua = Lua::new();
         lua.set_memory_limit(MEMORY_LIMIT_BYTES)?;
@@ -186,7 +188,7 @@ fn get_allowed(
     for redirect_count in 0..=MAX_REDIRECTS {
         ensure_allowed(&url, allowed)?;
         let response = client.get(url.clone()).headers(headers.clone()).send()?;
-        if is_redirect(response.status()) {
+        if network::is_redirect(response.status()) {
             if redirect_count == MAX_REDIRECTS {
                 bail!("too many redirects");
             }
@@ -196,7 +198,7 @@ fn get_allowed(
                 .ok_or_else(|| anyhow!("redirect response did not include a location"))?
                 .to_str()?;
             let next_url = url.join(location)?;
-            if !same_origin(&url, &next_url) {
+            if !network::same_origin(&url, &next_url) {
                 strip_cross_origin_headers(&mut headers);
             }
             url = next_url;
@@ -226,23 +228,6 @@ fn get_allowed(
     unreachable!()
 }
 
-fn is_redirect(status: StatusCode) -> bool {
-    matches!(
-        status,
-        StatusCode::MOVED_PERMANENTLY
-            | StatusCode::FOUND
-            | StatusCode::SEE_OTHER
-            | StatusCode::TEMPORARY_REDIRECT
-            | StatusCode::PERMANENT_REDIRECT
-    )
-}
-
-fn same_origin(left: &Url, right: &Url) -> bool {
-    left.scheme() == right.scheme()
-        && left.host_str() == right.host_str()
-        && left.port_or_known_default() == right.port_or_known_default()
-}
-
 fn strip_cross_origin_headers(headers: &mut HeaderMap) {
     // A script can use any header name for a credential. Preserve only content
     // negotiation headers when redirecting to a different origin.
@@ -258,7 +243,10 @@ fn strip_cross_origin_headers(headers: &mut HeaderMap) {
 }
 
 fn ensure_allowed(url: &Url, allowed: &[Url]) -> Result<()> {
-    if !allowed.iter().any(|candidate| same_origin(candidate, url)) {
+    if !allowed
+        .iter()
+        .any(|candidate| network::same_origin(candidate, url))
+    {
         bail!("outbound request origin is not allowed");
     }
     Ok(())
@@ -270,6 +258,12 @@ fn validate_content(content: &StatsContent) -> Result<()> {
     }
     if content.metrics.is_empty() || content.metrics.len() > 8 {
         bail!("widget must return between 1 and 8 metrics");
+    }
+    if content.metrics.iter().any(|metric| {
+        metric.label.trim().is_empty()
+            || matches!(&metric.value, JsonValue::Array(_) | JsonValue::Object(_))
+    }) {
+        bail!("widget metrics require a label and a scalar value");
     }
     if let Some(href) = &content.href {
         validate_http_url(href).context("invalid widget link")?;
@@ -306,15 +300,6 @@ mod tests {
         assert!(
             ensure_allowed(&Url::parse("https://example.com/data").unwrap(), &allowed).is_err()
         );
-    }
-
-    #[test]
-    fn only_actionable_redirects_are_followed() {
-        for status in [301, 302, 303, 307, 308] {
-            assert!(is_redirect(StatusCode::from_u16(status).unwrap()));
-        }
-        assert!(!is_redirect(StatusCode::NOT_MODIFIED));
-        assert!(!is_redirect(StatusCode::MULTIPLE_CHOICES));
     }
 
     #[test]
@@ -387,5 +372,21 @@ mod tests {
         let content = LuaRuntime::new().execute(&widget).await.unwrap();
         assert_eq!(content.title, "Test");
         assert_eq!(content.metrics[0].value, JsonValue::from(3));
+    }
+
+    #[test]
+    fn rejects_metrics_the_frontend_cannot_render() {
+        let invalid = StatsContent {
+            title: "Test".into(),
+            subtitle: String::new(),
+            href: None,
+            metrics: vec![Metric {
+                label: "Nested".into(),
+                value: serde_json::json!({ "count": 1 }),
+            }],
+            fetched_at: "2026-01-01T00:00:00Z".into(),
+        };
+
+        assert!(validate_content(&invalid).is_err());
     }
 }
