@@ -13,7 +13,7 @@ npm --prefix frontend audit --audit-level=moderate
 npm --prefix frontend run check
 npm --prefix frontend run build
 
-docker_args=(--tag stelle:verify)
+docker_args=(--pull --no-cache --tag stelle:verify)
 if [[ -n "${STELLE_DOCKER_NETWORK:-}" ]]; then
   docker_args+=(--network "$STELLE_DOCKER_NETWORK")
 fi

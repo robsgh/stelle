@@ -130,7 +130,7 @@ pub struct TraefikWidget {
 pub fn load(path: &Path) -> Result<LoadedConfig> {
     let raw = fs::read_to_string(path)
         .with_context(|| format!("could not read configuration {}", path.display()))?;
-    let config: DashboardConfig = serde_yaml::from_str(&raw)
+    let config: DashboardConfig = serde_saphyr::from_str(&raw)
         .with_context(|| format!("invalid configuration {}", path.display()))?;
     let base = path.parent().unwrap_or_else(|| Path::new("."));
     validate_and_load(config, base)
@@ -333,12 +333,12 @@ mod tests {
                 url: https://example.com
                 columns: 6
         "#;
-        assert!(serde_yaml::from_str::<DashboardConfig>(config).is_err());
+        assert!(serde_saphyr::from_str::<DashboardConfig>(config).is_err());
     }
 
     #[test]
     fn minimal_config_defers_headings_to_client_defaults() {
-        let config: DashboardConfig = serde_yaml::from_str(
+        let config: DashboardConfig = serde_saphyr::from_str(
             r#"
                 widgets:
                   - type: link
@@ -364,7 +364,7 @@ mod tests {
 
     #[test]
     fn lua_cache_ttl_defaults_to_five_minutes() {
-        let config: DashboardConfig = serde_yaml::from_str(
+        let config: DashboardConfig = serde_saphyr::from_str(
             r#"
                 widgets:
                   - type: lua
@@ -399,7 +399,7 @@ mod tests {
 
     #[test]
     fn rejects_cache_ttls_outside_limits() {
-        let config: DashboardConfig = serde_yaml::from_str(
+        let config: DashboardConfig = serde_saphyr::from_str(
             r#"
                 widgets:
                   - type: lua
@@ -421,12 +421,12 @@ mod tests {
                 label: Example
                 url: https://example.com
         "#;
-        assert!(serde_yaml::from_str::<DashboardConfig>(config).is_err());
+        assert!(serde_saphyr::from_str::<DashboardConfig>(config).is_err());
     }
 
     #[test]
     fn link_favicon_overrides_are_validated_and_server_only() {
-        let config: DashboardConfig = serde_yaml::from_str(
+        let config: DashboardConfig = serde_saphyr::from_str(
             r#"
                 widgets:
                   - type: link
@@ -454,7 +454,7 @@ mod tests {
 
     #[test]
     fn rejects_favicon_overrides_with_credentials() {
-        let config: DashboardConfig = serde_yaml::from_str(
+        let config: DashboardConfig = serde_saphyr::from_str(
             r#"
                 widgets:
                   - type: link
@@ -474,7 +474,7 @@ mod tests {
               title: Test
             widgets: []
         "#;
-        assert!(serde_yaml::from_str::<DashboardConfig>(config).is_err());
+        assert!(serde_saphyr::from_str::<DashboardConfig>(config).is_err());
     }
 
     #[test]

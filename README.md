@@ -142,6 +142,18 @@ docker compose up --detach
 
 ## Local development
 
+Use current stable Rust/Cargo (`rustup update stable`) and current LTS Node.js (`nvm install` reads `.nvmrc`). Docker follows the stable Rust, LTS Node.js, and Alpine 3 image tags. Use `docker build --pull --no-cache` to refresh base images, Alpine packages, and npm itself; the verification script does this automatically.
+
+Cargo and npm lockfiles record the tested dependency versions; refresh them with `cargo update` and `npm --prefix frontend update`.
+
+TypeScript stays on the latest 6.x release because SvelteKit 3 and `svelte-check` do not yet support TypeScript 7. Update it when their peer dependency ranges allow it.
+
+Security checks on 2026-11-13 found the following upstream limitations. The frontend build tooling pulls in `deepmerge` 4.3.1, which has an [unpatched low-severity advisory](https://github.com/advisories/GHSA-gcqx-w48m-w2h4). Svelte uses it to merge trusted build configuration; it is not shipped in the runtime container. Keep build configuration trusted and recheck `npm audit` when updating Svelte's Vite plugin.
+
+Image scans also flag medium-severity advisories in npm's bundled [glob](https://github.com/advisories/GHSA-3g3m-2fjr-6pw4) and [minimatch](https://github.com/advisories/GHSA-g3hv-75wg-m249), even with current npm. These are confined to the frontend build stage. Alpine's current BusyBox has an [unresolved wget advisory](https://security.alpinelinux.org/vuln/CVE-2025-60876); Stelle uses wget only for its local health check, while application HTTP requests use reqwest. Recheck these upstream findings when rebuilding images.
+
+The Rust build stage also has five high and eight medium scanner findings in Alpine's current `binutils`, with no fixed package version reported (for example, [CVE-2026-6846](https://security.alpinelinux.org/vuln/CVE-2026-6846)). Binutils is used during compilation and is absent from the runtime image. The runtime scan has no high or critical findings; its three medium findings all refer to the same BusyBox advisory. The Cargo dependency audit reports no vulnerabilities or warnings.
+
 Build the frontend:
 
 ```sh

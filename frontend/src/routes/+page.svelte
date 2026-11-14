@@ -3,8 +3,8 @@
   import CircleAlert from '@lucide/svelte/icons/circle-alert';
   import LoaderCircle from '@lucide/svelte/icons/loader-circle';
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
-  import Favicon from '$lib/Favicon.svelte';
-  import type { Dashboard, LinkWidget, LuaWidget, WidgetState } from '$lib/types';
+  import Favicon from '#lib/Favicon.svelte';
+  import type { Dashboard, LinkWidget, LuaWidget, WidgetState } from '#lib/types.ts';
   import '../app.css';
 
   let dashboard: Dashboard | null = null;
